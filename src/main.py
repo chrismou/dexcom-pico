@@ -8,7 +8,7 @@ from secrets import WIFI_SSID, WIFI_PASSWORD, API_URL, API_TOKEN
 
 # ----- Display setup -----
 display = PicoGraphics(display=DISPLAY_PICO_DISPLAY_2, pen_type=PEN_P8)
-display.set_backlight(1.0)
+display.set_backlight(0.5)
 WIDTH, HEIGHT = display.get_bounds()
 
 BLACK = display.create_pen(0, 0, 0)
@@ -70,11 +70,21 @@ def draw_text(text, x, y, color=WHITE, scale=2, wrap=WIDTH, font=None):
 
 def draw_status(msg, sub=None, dots=False):
     clear()
-    draw_text("Dexcom", 8, 8, CYAN, scale=2)
+    draw_text("Dexcom Monitor", 8, 8, CYAN, scale=2)
     draw_text(msg + ("." * ((time.ticks_ms() // 300) % 4) if dots else ""), 8, 32, GREY, scale=2)
     if sub:
         draw_text(sub, 8, 56, GREY, scale=2)
     display.update()
+
+# Small overlay helper for bottom-right messages
+
+def draw_bottom_right(msg, color=GREY, scale=1):
+    # Approximate right alignment assuming 8px per character for bitmap8 font
+    char_w = 8
+    text_w = len(msg) * char_w * scale
+    x = max(0, WIDTH - text_w - 4)
+    y = HEIGHT - (char_w * scale) - 4
+    draw_text(msg, x, y, color=color, scale=scale, wrap=WIDTH, font="bitmap8")
 
 # ---- Helpers ----
 def any_button_pressed():
@@ -88,14 +98,16 @@ def draw_trend(trend, x0, y0, w, h, color=WHITE):
     cy = y0 + h // 2
     size = min(w, h) // 6
 
-    def arrow(dx, dy):
-        x1 = cx - dx * size
+    def arrow(dx, dy, offset_x=0.0):
+        # offset_x shifts the arrow horizontally
+        center_x = cx + offset_x
+        x1 = center_x - dx * size
         y1 = cy - dy * size
-        x2 = cx + dx * size
+        x2 = center_x + dx * size
         y2 = cy + dy * size
 
         # Draw thicker shaft by drawing multiple parallel lines
-        thickness = 3  # Adjust this value for thicker/thinner shaft
+        thickness = 5  # Adjust this value for thicker/thinner shaft
         pdx, pdy = -dy, dx  # perpendicular vector for thickness
         for offset in range(-thickness // 2, thickness // 2 + 1):
             display.line(
@@ -108,8 +120,8 @@ def draw_trend(trend, x0, y0, w, h, color=WHITE):
         # arrow head (bigger)
         hx = x2
         hy = y2
-        ah = size // 2  # Increased from size // 3 to make head bigger
-        aw = ah // 2  # Width of arrow head
+        ah = size // 1.8  # Increased from size // 3 to make head bigger
+        aw = ah // 1.8  # Width of arrow head
 
         # Draw thicker arrow head lines
         for offset in range(-thickness // 2, thickness // 2 + 1):
@@ -126,9 +138,12 @@ def draw_trend(trend, x0, y0, w, h, color=WHITE):
                 int(hy - dy * ah - pdy * aw + pdy * offset)
             )
 
+    draw_bottom_right(trend, WHITE, scale=1)
+
     if trend == "doubleUp":
-        arrow(0, -1)
-        arrow(0, -1)
+        spacing = size * 1.0  # Adjust spacing between arrows as needed
+        arrow(0, -1, -spacing // 2)
+        arrow(0, -1, spacing // 2)
     elif trend == "singleUp":
         arrow(0, -1)
     elif trend == "fortyFiveUp":
@@ -140,8 +155,9 @@ def draw_trend(trend, x0, y0, w, h, color=WHITE):
     elif trend == "singleDown":
         arrow(0, 1)
     elif trend == "doubleDown":
-        arrow(0, 1)
-        arrow(0, 1)
+        spacing = size * 1.0  # Adjust spacing between arrows as needed
+        arrow(0, 1, -spacing // 2)
+        arrow(0, 1, spacing // 2)
     else:
         # do nothing for unknown trend
         return
@@ -191,7 +207,7 @@ def draw_reading(state):
 
     # Minutes since update (based on receive time on device)
     mins = minutes_since_ms(state.get("received_ms"))
-    mins_txt = ("%d mins" % mins) if mins is not None else ""
+    mins_txt = ("%d mins" % mins + ' ago') if mins is not None else ""
 
     # Draw texts
     draw_text(mins_txt, 8, 8, WHITE, scale=2, font="bitmap8")  # Small font for time
@@ -266,9 +282,14 @@ def main():
 
     while True:
         now = time.ticks_ms()
-        need_fetch = time.ticks_diff(now, last_fetch) >= poll_ms or any_button_pressed()
+        button_pressed = any_button_pressed()
+        need_fetch = time.ticks_diff(now, last_fetch) >= poll_ms or button_pressed
         if need_fetch:
             last_fetch = now
+            if button_pressed:
+                # Show transient overlay while fetching due to manual refresh
+                draw_bottom_right("Checking for updates", WHITE, scale=1)
+                display.update()
             data = fetch_latest()
             if data is not None:
                 data_id = data.get("id")
