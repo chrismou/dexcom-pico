@@ -207,8 +207,7 @@ def draw_reading(state):
 
     # Minutes since update (based on receive time on device)
     mins = minutes_since_ms(state.get("received_ms"))
-    mins_txt = ("%d mins" % mins + ' ago') if mins is not None else ""
-
+    mins_txt = ("Updated %d mins" % mins + ' ago') if mins is not None else ""
     # Draw texts
     draw_text(mins_txt, 8, 8, WHITE, scale=2, font="bitmap8")  # Small font for time
     draw_text(show_text, 8, HEIGHT // 2 - 0, color, scale=3, font="sans")  # Larger bold font for value
