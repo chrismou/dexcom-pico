@@ -62,10 +62,12 @@ _session = [None]   # _session[0] holds the current session id string or None
 # ----- Staleness / epoch constants -----
 _STALE_LIMIT_MS = 5 * 60 * 1000   # 300 000 ms — reading older than this shows "---"
 
-# The RP2040 MicroPython port's time.time() epoch is 2000-01-01 00:00:00 UTC,
-# whereas Dexcom ts_ms values use the Unix epoch (1970-01-01 00:00:00 UTC).
-# Difference = 30 years exactly = 946 684 800 seconds.
-_PICO_EPOCH_OFFSET_S = 946_684_800
+# Dexcom ts_ms values use the Unix epoch (1970-01-01 UTC). MicroPython ports
+# differ: some use a 2000-01-01 epoch for time.time(), others (e.g. the Pimoroni
+# Pico build) already use the Unix epoch. Detect the base at runtime via the year
+# of gmtime(0) so the age maths is correct on any firmware — a hard-coded offset
+# double-counts on Unix-epoch builds (showing ~946 684 800 s of bogus age).
+_PICO_EPOCH_OFFSET_S = 946_684_800 if time.gmtime(0)[0] == 2000 else 0
 
 # Set to True after a successful ntptime.settime() call at boot.
 # When False, draw_reading() falls back to monotonic ticks from received_ms.
@@ -284,8 +286,10 @@ def draw_reading(state):
     draw_text(show_text, 8, HEIGHT // 2 - 0, color, scale=3, font="sans")  # Larger bold font for value
     draw_text(unit, 8, HEIGHT - 24, WHITE, scale=2, font="bitmap8")  # Small font for unit
 
-    # right area trend
-    draw_trend(trend, left_w, 0, WIDTH - left_w, HEIGHT, WHITE)
+    # right area trend — hide the arrow (and its label) when the value is
+    # blanked to "---" (stale or no reading), since the trend is meaningless then.
+    if val is not None:
+        draw_trend(trend, left_w, 0, WIDTH - left_w, HEIGHT, WHITE)
 
     display.update()
 
