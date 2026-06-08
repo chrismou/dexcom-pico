@@ -20,6 +20,14 @@ Glucose readings are always displayed in mmol/L (one decimal place). The `unit` 
 The Dexcom API should be polled every 30 seconds. Change detection uses the reading's timestamp (`ts_ms`); if the
 timestamp is None (e.g. the field was unparseable) the reading is always treated as new to avoid freezing the display.
 
+RGB LED alert indicator:
+
+The Pimoroni Display Pack 2.8's onboard RGB LED (GP26/27/28) provides a glanceable status indicator:
+- **Off** (default) when the reading is current and in range (4–14 mmol/L)
+- **Flashing red** (~0.5 s on, 0.5 s off, brightness 80/255) when the reading value is out of range (> 14 or < 4 mmol/L)
+- **Solid red** when the reading is stale (> 5 minutes old)
+- **Precedence rule**: Stale (solid red) takes priority over out-of-range (flashing red), which takes priority over off
+
 Scenarios for the data:
 
 1. A reading is returned (value is set):

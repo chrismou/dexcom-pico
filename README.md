@@ -18,6 +18,7 @@ A real-time Dexcom glucose monitor running on a Raspberry Pi Pico 2 W with a Pim
 - Manual refresh via button press on display
 - True sensor-age staleness detection: readings older than 5 minutes (based on sensor timestamp) display as `---` to highlight stale data at a glance
 - Automatic NTP time sync at boot for accurate sensor-age calculation; graceful fallback to monotonic time if NTP unavailable
+- Onboard RGB LED glucose alerts: flashes red when glucose is out of range (> 14 or < 4 mmol/L), shows solid red when data is stale (> 5 min old), off otherwise
 - Configuration error screen if credentials are missing
 
 ## Required MicroPython Libraries

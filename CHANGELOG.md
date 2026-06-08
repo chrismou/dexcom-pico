@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 - **Stale-reading staleness detection** — Glucose readings whose sensor timestamp exceeds 5 minutes are now displayed as `---` instead of showing a stale numeric value. The "Last reading N mins ago" text remains visible to indicate freshness at a glance.
 - **True sensor-age basis** — Reading age is now computed from the Dexcom sensor's timestamp (WT field) rather than the device's receipt time. This correctly handles buffered readings that arrive aged.
 - **NTP time synchronization at boot** — The Pico now syncs its real-time clock via NTP immediately after Wi-Fi connects (3 retries, 2-second gaps). This enables accurate wall-clock-based sensor-age calculation. If NTP fails, the app degrades gracefully to monotonic time with a brief "No NTP" status shown; this is non-fatal.
+- **Onboard RGB LED glucose alerts** — The Pimoroni Display Pack 2.8's RGB LED (GP26/27/28) now provides visual feedback for glucose status: flashes red (~0.5 s on/off, 80/255 brightness) when the value is out of range (> 14 or < 4 mmol/L), shows solid red when the reading is stale (> 5 minutes old), and remains off otherwise. Precedence: stale > out-of-range > off.
 
 ### Changed
 

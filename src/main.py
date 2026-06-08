@@ -4,7 +4,7 @@ import ntptime
 import urequests as requests
 import ujson as json
 from picographics import PicoGraphics, DISPLAY_PICO_DISPLAY_2, PEN_P8
-from pimoroni import Button
+from pimoroni import Button, RGBLED
 from secrets import WIFI_SSID, WIFI_PASSWORD, DEXCOM_ACCOUNT_ID, DEXCOM_PASSWORD, DEXCOM_REGION
 
 # ----- Display setup -----
@@ -59,6 +59,13 @@ _TREND_MAP = {
 # Mutable cell holding the current Dexcom session id
 _session = [None]   # _session[0] holds the current session id string or None
 
+# ----- LED alert state -----
+# LED state cache — written by draw_reading(), consumed by update_led() each tick.
+# Possible values for _led_mode: "off", "solid_red", "flash_red"
+_led_mode = ["off"]   # mutable cell so draw_reading() can update it without global
+_LED_FLASH_PERIOD_MS = 1000        # total flash cycle: 500 ms on, 500 ms off
+_LED_RED_BRIGHTNESS  = 80          # 0-255; note: these are raw RGB values, not pen IDs
+
 # ----- Staleness / epoch constants -----
 _STALE_LIMIT_MS = 5 * 60 * 1000   # 300 000 ms — reading older than this shows "---"
 
@@ -83,6 +90,12 @@ button_a = Button(12)
 button_b = Button(13)
 button_x = Button(14)
 button_y = Button(15)
+
+# ----- RGB LED -----
+# Display Pack 2.8" wires the onboard RGB LED to GP26/27/28 (the smaller 1.14"/2.0"
+# packs use GP6/7/8 — wrong pins leave the LED uninitialised and floating white).
+led = RGBLED(26, 27, 28)
+led.set_rgb(0, 0, 0)   # explicitly off at boot; overrides the hardware default white
 
 # ----- Wi-Fi -----
 def connect_wifi(ssid, password, timeout=20):
@@ -270,12 +283,14 @@ def draw_reading(state):
     show_text = "---"
     color = WHITE
 
+    _out_of_range = False
     if val is not None:
         show_text = str(val)
         try:
             numeric = float(val)
             if numeric > 14 or numeric < 4:
                 color = RED
+                _out_of_range = True
         except Exception:
             pass
 
@@ -291,7 +306,35 @@ def draw_reading(state):
     if val is not None:
         draw_trend(trend, left_w, 0, WIDTH - left_w, HEIGHT, WHITE)
 
+    # --- LED state ---
+    # Precedence: stale (solid red) > out-of-range (flash red) > off.
+    # age_ms and _out_of_range are fully resolved by this point.
+    if age_ms is not None and age_ms > _STALE_LIMIT_MS:
+        _led_mode[0] = "solid_red"
+    elif _out_of_range:
+        _led_mode[0] = "flash_red"
+    else:
+        _led_mode[0] = "off"
+
     display.update()
+
+
+def update_led():
+    """Drive the RGB LED according to the current _led_mode.
+    Called every main-loop tick (~0.2 s) so flash cadence is smooth
+    regardless of how infrequently draw_reading() is called.
+    """
+    mode = _led_mode[0]
+    if mode == "solid_red":
+        led.set_rgb(_LED_RED_BRIGHTNESS, 0, 0)
+    elif mode == "flash_red":
+        phase = time.ticks_ms() % _LED_FLASH_PERIOD_MS
+        if phase < _LED_FLASH_PERIOD_MS // 2:
+            led.set_rgb(_LED_RED_BRIGHTNESS, 0, 0)
+        else:
+            led.set_rgb(0, 0, 0)
+    else:  # "off" or any unrecognised value
+        led.set_rgb(0, 0, 0)
 
 
 # ----- Dexcom client helpers -----
@@ -529,6 +572,7 @@ def main():
             if last_state.get("received_ms") is not None:
                 draw_reading(last_state)
 
+        update_led()
         time.sleep(0.2)
 
 
