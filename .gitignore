@@ -1,2 +1,3 @@
 .venv
 src/secrets.py
+.claude/settings.local.json
