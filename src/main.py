@@ -67,7 +67,7 @@ _LED_FLASH_PERIOD_MS = 1000        # total flash cycle: 500 ms on, 500 ms off
 _LED_RED_BRIGHTNESS  = 80          # 0-255; note: these are raw RGB values, not pen IDs
 
 # ----- Staleness / epoch constants -----
-_STALE_LIMIT_MS = 5 * 60 * 1000   # 300 000 ms — reading older than this shows "---"
+_STALE_LIMIT_MS = 6 * 60 * 1000   # 360 000 ms — reading older than this shows "---"
 
 # Dexcom ts_ms values use the Unix epoch (1970-01-01 UTC). MicroPython ports
 # differ: some use a 2000-01-01 epoch for time.time(), others (e.g. the Pimoroni
@@ -274,7 +274,7 @@ def draw_reading(state):
             mins = None
 
     # --- Staleness gate ---
-    # If the reading is over 5 minutes old, blank the value.
+    # If the reading is over 6 minutes old, blank the value.
     # Uses the same age_ms computed above so age text and staleness gate are consistent.
     if age_ms is not None and age_ms > _STALE_LIMIT_MS:
         val = None   # blank the value; unit and trend are preserved below
@@ -463,7 +463,7 @@ def fetch_latest():
         _session[0] = None
         _session[0] = dexcom_login(DEXCOM_REGION, DEXCOM_ACCOUNT_ID, DEXCOM_PASSWORD)
         if _session[0] is None:
-            return None   # re-auth failed; caller applies 5-min stale rule
+            return None   # re-auth failed; caller applies 6-min stale rule
         raw = dexcom_fetch_latest(DEXCOM_REGION, _session[0])
         if raw is None:
             return None

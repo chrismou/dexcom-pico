@@ -25,7 +25,7 @@ RGB LED alert indicator:
 The Pimoroni Display Pack 2.8's onboard RGB LED (GP26/27/28) provides a glanceable status indicator:
 - **Off** (default) when the reading is current and in range (4–14 mmol/L)
 - **Flashing red** (~0.5 s on, 0.5 s off, brightness 80/255) when the reading value is out of range (> 14 or < 4 mmol/L)
-- **Solid red** when the reading is stale (> 5 minutes old)
+- **Solid red** when the reading is stale (> 6 minutes old)
 - **Precedence rule**: Stale (solid red) takes priority over out-of-range (flashing red), which takes priority over off
 
 Scenarios for the data:
@@ -47,8 +47,8 @@ Scenarios for the data:
      values in red — there is no separate HIGH/LOW text state.
 
 2. No reading is returned (API unreachable, login failure, empty list, or network error):
-   - Continue displaying the existing reading as long as the time since the last successful fetch is less than 5 minutes.
-   - If more than 5 minutes have passed since the last successful reading, update the display to show `---`.
+   - Continue displaying the existing reading as long as the time since the last successful fetch is less than 6 minutes.
+   - If more than 6 minutes have passed since the last successful reading, update the display to show `---`.
 
 If any of the 4 buttons are pressed, the API should be called immediately and the display updated as described above.
 
