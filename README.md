@@ -16,8 +16,9 @@ A real-time Dexcom glucose monitor running on a Raspberry Pi Pico 2 W with a Pim
 - Out-of-range values displayed in red (> 14 or < 4 mmol/L)
 - Automatic session management with silent re-login on expiry
 - Manual refresh via button press on display
-- True sensor-age staleness detection: readings older than 5 minutes (based on sensor timestamp) display as `---` to highlight stale data at a glance
+- True sensor-age staleness detection: readings older than 6 minutes (based on sensor timestamp) display as `---` to highlight stale data at a glance
 - Automatic NTP time sync at boot for accurate sensor-age calculation; graceful fallback to monotonic time if NTP unavailable
+- Onboard RGB LED glucose alerts: flashes red when glucose is out of range (> 14 or < 4 mmol/L), shows solid red when data is stale (> 6 min old), off otherwise
 - Configuration error screen if credentials are missing
 
 ## Required MicroPython Libraries
@@ -111,11 +112,11 @@ When a current reading is received:
     - ↓↓ = doubleDown (two downward arrows)
   - No arrow for unknown/unmeasurable trends
 
-**Staleness indicator:** If the reading's sensor timestamp is older than 5 minutes, the glucose value is replaced with `---`. The "Last reading N mins ago" text remains visible, allowing you to see at a glance whether data is fresh or stale. This is particularly useful when Dexcom Share buffers readings — a buffered reading that is already old when received will be immediately shown as stale rather than appearing current.
+**Staleness indicator:** If the reading's sensor timestamp is older than 6 minutes, the glucose value is replaced with `---`. The "Last reading N mins ago" text remains visible, allowing you to see at a glance whether data is fresh or stale. This is particularly useful when Dexcom Share buffers readings — a buffered reading that is already old when received will be immediately shown as stale rather than appearing current.
 
 #### 2. No Reading Available (Stale Data)
 
-If the API is unreachable or returns no data, the Pico continues to display the last successful reading. However, if the last reading's sensor timestamp is older than 5 minutes, the glucose value is replaced with `---` while the "Last reading N mins ago" text remains visible. This gives you a clear visual indicator of data freshness.
+If the API is unreachable or returns no data, the Pico continues to display the last successful reading. However, if the last reading's sensor timestamp is older than 6 minutes, the glucose value is replaced with `---` while the "Last reading N mins ago" text remains visible. This gives you a clear visual indicator of data freshness.
 
 #### 3. Configuration Error
 
@@ -162,7 +163,7 @@ The API is polled every 30 seconds. Manual button presses bypass this interval.
 
 ### Session Expired
 
-The Pico automatically handles Dexcom session expiry by attempting a silent re-login. If re-login fails, the staleness rule (5 minutes) applies. No manual action is needed.
+The Pico automatically handles Dexcom session expiry by attempting a silent re-login. If re-login fails, the staleness rule (6 minutes) applies. No manual action is needed.
 
 ## Development
 
@@ -175,7 +176,7 @@ This is a MicroPython project. To modify:
 The code uses a simple state machine:
 - Wi-Fi connection with retry loop
 - Session-based API authentication (lazy login on startup, re-login on expiry)
-- Poll-or-stale display logic (30-second interval, 5-minute stale threshold)
+- Poll-or-stale display logic (30-second interval, 6-minute stale threshold)
 - Button-driven manual refresh
 
 ## License
