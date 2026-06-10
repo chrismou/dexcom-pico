@@ -30,10 +30,11 @@ The Pimoroni Display Pack 2.8's onboard RGB LED (GP26/27/28) provides a glanceab
 
 Scenarios for the data:
 
-1. A reading is returned (value is set):
+1. A reading is returned (value is set) and is not stale:
    - Display the mmol/L value in large text on the left half of the screen. Underneath in small text display "mmol/L",
      and above in small text display "Last reading N mins ago" (N = minutes since the reading's sensor timestamp).
-   - On the right, show a graphic arrow depicting the trend. Possible trend values and arrows:
+   - On the right, show a graphic arrow depicting the trend. The bottom-right corner is blank during normal operation.
+   Possible trend values and arrows:
        "doubleUp": 2 arrows pointing upwards
        "singleUp": 1 arrow pointing upwards
        "fortyFiveUp": 1 arrow pointing up at a 45-degree angle
@@ -46,9 +47,9 @@ Scenarios for the data:
    - Out-of-range sentinel values from Dexcom (Value=400 → 22.2 mmol/L, Value=40 → 2.2 mmol/L) are shown as numeric
      values in red — there is no separate HIGH/LOW text state.
 
-2. No reading is returned (API unreachable, login failure, empty list, or network error):
+2. No reading is returned (API unreachable, login failure, empty list, or network error), or the reading is stale:
    - Continue displaying the existing reading as long as the time since the last successful fetch is less than 6 minutes.
-   - If more than 6 minutes have passed since the last successful reading, update the display to show `---`.
+   - If more than 6 minutes have passed since the last successful reading (stale state), update the display to show `---` in the main value area, hide the trend arrow, and display `"Last: X.X"` in the bottom-right corner showing the last known glucose value (one decimal, mmol/L). The "Last reading N mins ago" text remains visible to indicate staleness.
 
 If any of the 4 buttons are pressed, the API should be called immediately and the display updated as described above.
 

@@ -204,9 +204,6 @@ def draw_trend(trend, x0, y0, w, h, color=WHITE):
                 int(hy - dy * ah - pdy * aw + pdy * offset)
             )
 
-    if trend is not None:
-        draw_bottom_right(trend, WHITE, scale=1)
-
     if trend == "doubleUp":
         spacing = size * 1.0  # Adjust spacing between arrows as needed
         arrow(0, -1, -spacing // 2)
@@ -315,6 +312,12 @@ def draw_reading(state):
         _led_mode[0] = "flash_red"
     else:
         _led_mode[0] = "off"
+
+    # Bottom-right: blank by default; show last known reading when stale.
+    if age_ms is not None and age_ms > _STALE_LIMIT_MS:
+        last_val = state.get("value")
+        if last_val is not None:
+            draw_bottom_right("Last: %.1f" % last_val, GREY, scale=1)
 
     display.update()
 
