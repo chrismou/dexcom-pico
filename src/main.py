@@ -144,12 +144,21 @@ def draw_status(msg, sub=None, dots=False):
 
 # Small overlay helper for bottom-right messages
 
-def draw_bottom_right(msg, color=GREY, scale=1):
-    # Approximate right alignment assuming 8px per character for bitmap8 font
-    char_w = 8
-    text_w = len(msg) * char_w * scale
+def draw_bottom_right(msg, color=GREY, scale=1, y=None):
+    # Right-align using the font's true measured width. An 8px/char estimate
+    # overshoots bitmap8's actual glyph width and leaves the text floating well
+    # left of the edge, so measure it directly (with an estimate as fallback).
+    # y defaults to a scale-derived bottom margin; pass an explicit y to align
+    # the baseline with another element (e.g. the bottom-left unit label).
+    char_h = 8
+    try:
+        display.set_font("bitmap8")
+        text_w = display.measure_text(msg, scale)
+    except Exception:
+        text_w = len(msg) * char_h * scale
     x = max(0, WIDTH - text_w - 4)
-    y = HEIGHT - (char_w * scale) - 4
+    if y is None:
+        y = HEIGHT - (char_h * scale) - 4
     draw_text(msg, x, y, color=color, scale=scale, wrap=WIDTH, font="bitmap8")
 
 # ---- Helpers ----
@@ -203,9 +212,6 @@ def draw_trend(trend, x0, y0, w, h, color=WHITE):
                 int(hx - dx * ah - pdx * aw + pdx * offset),
                 int(hy - dy * ah - pdy * aw + pdy * offset)
             )
-
-    if trend is not None:
-        draw_bottom_right(trend, WHITE, scale=1)
 
     if trend == "doubleUp":
         spacing = size * 1.0  # Adjust spacing between arrows as needed
@@ -315,6 +321,12 @@ def draw_reading(state):
         _led_mode[0] = "flash_red"
     else:
         _led_mode[0] = "off"
+
+    # Bottom-right: blank by default; show last known reading when stale.
+    if age_ms is not None and age_ms > _STALE_LIMIT_MS:
+        last_val = state.get("value")
+        if last_val is not None:
+            draw_bottom_right("Previous: %.1f" % last_val, WHITE, scale=2, y=HEIGHT - 24)
 
     display.update()
 
