@@ -179,6 +179,11 @@ The code uses a simple state machine:
 - Poll-or-stale display logic (30-second interval, 6-minute stale threshold)
 - Button-driven manual refresh
 
+## Future plans
+
+- Its currently designed with the intention of having it sat on a desk, hence the fixed Wi-Fi credentials. Will add support for multiple creds for multiple locations, or possibly selecting the SSID and setting the password on device
+- I have a mini speaker for mine, but I've not got round to soldering it on yet. Once I do I'll look into adding audio notification support, to work alongide the LED
+
 ## License
 
 This project is provided as-is.
