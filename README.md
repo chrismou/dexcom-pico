@@ -186,4 +186,4 @@ The code uses a simple state machine:
 
 ## License
 
-This project is provided as-is.
+Released under the [MIT License](LICENSE).

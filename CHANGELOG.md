@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
 - **NTP time synchronization at boot** — The Pico now syncs its real-time clock via NTP immediately after Wi-Fi connects (3 retries, 2-second gaps). This enables accurate wall-clock-based sensor-age calculation. If NTP fails, the app degrades gracefully to monotonic time with a brief "No NTP" status shown; this is non-fatal.
 - **Onboard RGB LED glucose alerts** — The Pimoroni Display Pack 2.8's RGB LED (GP26/27/28) now provides visual feedback for glucose status: flashes red (~0.5 s on/off, 80/255 brightness) when the value is out of range (> 14 or < 4 mmol/L), shows solid red when the reading is stale (> 6 minutes old), and remains off otherwise. Precedence: stale > out-of-range > off.
 - **Last-known reading on stale** — When a reading becomes stale (> 6 minutes old), the bottom-right corner now displays `"Previous: X.X"` showing the last known glucose value (mmol/L) before the device went offline. This provides context for how close the final reading was to in-range boundaries.
+- **MIT License** — The project is now released under the MIT License (`LICENSE`).
 
 ### Changed
 
