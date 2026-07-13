@@ -49,7 +49,7 @@ Scenarios for the data:
 
 2. No reading is returned (API unreachable, login failure, empty list, or network error), or the reading is stale:
    - Continue displaying the existing reading as long as the time since the last successful fetch is less than 6 minutes.
-   - If more than 6 minutes have passed since the last successful reading (stale state), update the display to show `---` in the main value area, hide the trend arrow, and display `"Last: X.X"` in the bottom-right corner showing the last known glucose value (one decimal, mmol/L). The "Last reading N mins ago" text remains visible to indicate staleness.
+   - If more than 6 minutes have passed since the last successful reading (stale state), update the display to show `---` in the main value area, hide the trend arrow, and display `"Previous: X.X"` in the bottom-right corner showing the last known glucose value (one decimal, mmol/L). The "Last reading N mins ago" text remains visible to indicate staleness.
 
 If any of the 4 buttons are pressed, the API should be called immediately and the display updated as described above.
 
