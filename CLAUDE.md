@@ -35,6 +35,8 @@ Key cross-cutting concepts that span the file:
 
 - **Change detection** (poll loop). `received_ms` is only reset when a genuinely new reading arrives, compared by `ts_ms`; if `ts_ms` is None (parse failure), it falls back to comparing the glucose value so a repeated identical reading doesn't reset the receive clock and a parse failure never freezes the display.
 
+- **Hang protection** (`_wdt` + `feed_watchdog`, `_REQUEST_TIMEOUT_S`, `rejoin_wifi`). An 8 s hardware watchdog is armed at the top of `main()` and cannot be disabled afterwards. Every blocking loop (Wi-Fi connect/rejoin, button waits, the poll loop) must call `feed_watchdog()`, and `fetch_latest` feeds it before each network step. All `requests.post` calls pass `timeout=_REQUEST_TIMEOUT_S`, which must stay below the watchdog period. The top-level handler reboots via `machine.reset()` after showing the error screen. Do not add an unbounded sleep, poll, or socket call without feeding the watchdog, and do not remove the request timeout — an untimed socket read was the original cause of silent display freezes.
+
 ## Conventions
 
 - Glucose is **always** mmol/L, one decimal (`_MMOL_FACTOR`, `round(..., 1)`). Out-of-range values (`> 14` or `< 4`) render red; there is no separate HIGH/LOW text state — sentinel values like 400/40 mg/dL just render as red numbers.

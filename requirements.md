@@ -4,8 +4,9 @@ The software should work as follows:
 
 When starting up the Pico should attempt to connect to the WiFi using the credentials saved in secrets.py. It should show
 feedback on the screen to let the user know it's connected, and gracefully handle if it can't connect within a reasonable
-amount of time, stopping execution. It should present the user with the option to retry connecting to WiFi by pressing one
-of the buttons on the display.
+amount of time. On failure it shows "Wi-Fi failed" with a "Retrying in Ns" countdown (5 s) and then retries automatically,
+indefinitely, so an unattended device recovers on its own once the network is back. Pressing any button skips the
+countdown and retries immediately.
 
 Once connected, it should authenticate directly with the Dexcom Share API using the credentials stored in secrets.py
 (`DEXCOM_ACCOUNT_ID`, `DEXCOM_PASSWORD`, `DEXCOM_REGION`). No wrapper URL or Bearer token is used. The Pico obtains a
@@ -52,6 +53,17 @@ Scenarios for the data:
    - If more than 6 minutes have passed since the last successful reading (stale state), update the display to show `---` in the main value area, hide the trend arrow, and display `"Previous: X.X"` in the bottom-right corner showing the last known glucose value (one decimal, mmol/L). The "Last reading N mins ago" text remains visible to indicate staleness.
 
 If any of the 4 buttons are pressed, the API should be called immediately and the display updated as described above.
+
+Resilience:
+
+- Every Dexcom request uses a bounded socket timeout (5 s per operation) so a stalled connection is treated as a failed
+  fetch rather than blocking the display loop.
+- Before each poll the Wi-Fi link is checked; if it has dropped, a bounded rejoin (5 s) is attempted without replacing
+  the reading on screen. If the rejoin fails the poll is skipped and the staleness rule applies as normal.
+- A hardware watchdog (8 s) is armed at startup and fed on every loop tick and between network steps. If the device
+  hangs for any reason it reboots rather than freezing with the last frame on screen.
+- An unhandled error shows an "Error" screen for 3 s and then reboots the device. The device must never sit on a
+  frozen frame indefinitely.
 
 secrets.py keys (gitignored, never committed):
   WIFI_SSID, WIFI_PASSWORD

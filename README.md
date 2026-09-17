@@ -89,6 +89,8 @@ Once the files are in place, reboot the Pico. The device will:
 
 **Note on NTP sync:** The Pico attempts to set its real-time clock from an NTP server at startup (3 attempts with 2-second gaps). This is used to compute the age of glucose readings based on their sensor timestamp. If NTP fails, the app continues in a fallback mode that uses monotonic time from when the reading was received. A brief "No NTP" message is shown on the display if synchronization fails; this is not fatal and does not prevent the app from running.
 
+**Note on resilience:** Each Dexcom request has a 5-second socket timeout, the Wi-Fi link is re-checked (and rejoined if needed) before every poll, and an 8-second hardware watchdog reboots the board if the main loop ever stalls. An unhandled error shows an "Error" screen for 3 seconds and then reboots. Because the watchdog cannot be disabled once armed, stopping `main.py` from Thonny or a REPL will reboot the Pico within about 8 seconds; reconnect the IDE afterwards if you want to keep working interactively.
+
 ## On-Device Behavior
 
 ### Display States
@@ -127,11 +129,11 @@ If `DEXCOM_ACCOUNT_ID` or `DEXCOM_PASSWORD` is blank:
 
 #### 4. Wi-Fi Connection
 
-On startup, the Pico attempts to connect to Wi-Fi. If it fails:
+On startup, the Pico attempts to connect to Wi-Fi. Each attempt times out after 20 seconds. If it fails:
 
-- A retry prompt is displayed
-- Press any button on the display to retry
-- If connection times out after 20 seconds per attempt, the Pico stops execution
+- "Wi-Fi failed" is displayed with a "Retrying in Ns" countdown
+- After 5 seconds the Pico retries automatically, and keeps retrying until it connects
+- Press any button on the display to skip the countdown and retry immediately
 
 ### Button Interactions
 
@@ -147,7 +149,7 @@ The API is polled every 30 seconds. Manual button presses bypass this interval.
 
 - Verify SSID and password in `secrets.py` are correct
 - Ensure the Wi-Fi network is within range
-- Press a button to retry connection
+- The Pico retries automatically every few seconds; press a button to retry immediately
 
 ### "Config error" Message
 

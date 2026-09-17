@@ -1,4 +1,5 @@
 import time
+import machine
 import network
 import ntptime
 import urequests as requests
@@ -84,6 +85,27 @@ _ntp_synced = False
 _NTP_MAX_RETRIES = 3
 _NTP_RETRY_DELAY_S = 2
 
+# ----- Resilience settings -----
+# Per-operation socket timeout for Dexcom requests. Without one, a stalled TCP
+# connection (e.g. Wi-Fi dropping mid-request, or a server that accepts the
+# connection but never replies) blocks recv() forever and freezes the whole
+# display loop with no error. Must stay well below _WDT_TIMEOUT_MS.
+_REQUEST_TIMEOUT_S = 5
+
+# Hardware watchdog period. If the main loop stops feeding it (a hang anywhere,
+# including inside C-level socket code), the RP2350 reboots. The rp2 port caps
+# this at ~8388 ms. Every blocking loop in this file must call feed_watchdog().
+_WDT_TIMEOUT_MS = 8000
+
+# Bounded wait for a Wi-Fi rejoin attempted from the poll loop.
+_WIFI_REJOIN_WAIT_S = 5
+
+# Pause between automatic boot-time Wi-Fi retries (a button press skips it).
+_WIFI_RETRY_DELAY_S = 5
+
+# How long the fatal-error screen is shown before the device reboots.
+_FATAL_ERROR_PAUSE_S = 3
+
 # ----- Buttons -----
 # Pico Display/Pico Display 2.8 buttons are typically on GPIOs A=12, B=13, X=14, Y=15
 button_a = Button(12)
@@ -97,9 +119,24 @@ button_y = Button(15)
 led = RGBLED(26, 27, 28)
 led.set_rgb(0, 0, 0)   # explicitly off at boot; overrides the hardware default white
 
+# ----- Watchdog -----
+# Armed in main() so simply importing this module does not start the timer.
+# Once armed the RP2350 watchdog cannot be disabled; stopping the script from
+# a REPL/Thonny will therefore reboot the board within _WDT_TIMEOUT_MS.
+_wdt = [None]   # mutable cell holding the machine.WDT instance, or None
+
+
+def feed_watchdog():
+    """Feed the hardware watchdog if it has been armed."""
+    if _wdt[0] is not None:
+        _wdt[0].feed()
+
+
 # ----- Wi-Fi -----
+wlan = network.WLAN(network.STA_IF)
+
+
 def connect_wifi(ssid, password, timeout=20):
-    wlan = network.WLAN(network.STA_IF)
     if not wlan.active():
         wlan.active(True)
     if not wlan.isconnected():
@@ -109,6 +146,7 @@ def connect_wifi(ssid, password, timeout=20):
             pass
         t0 = time.ticks_ms()
         while not wlan.isconnected():
+            feed_watchdog()
             if time.ticks_diff(time.ticks_ms(), t0) > timeout * 1000:
                 return None
             draw_status("Connecting to Wi-Fi", sub="Press any button to cancel", dots=True)
@@ -116,6 +154,29 @@ def connect_wifi(ssid, password, timeout=20):
                 return None
             time.sleep(0.1)
     return wlan.ifconfig()
+
+
+def rejoin_wifi(timeout=_WIFI_REJOIN_WAIT_S):
+    """Re-associate with the AP if the link has dropped since boot.
+    Called from the poll loop before each fetch. Waits at most `timeout`
+    seconds and draws nothing, so the current reading (and its staleness
+    state) stays visible throughout. Returns True when connected.
+    """
+    if wlan.isconnected():
+        return True
+    try:
+        if not wlan.active():
+            wlan.active(True)
+        wlan.connect(WIFI_SSID, WIFI_PASSWORD)
+    except Exception:
+        pass
+    t0 = time.ticks_ms()
+    while not wlan.isconnected():
+        feed_watchdog()
+        if time.ticks_diff(time.ticks_ms(), t0) > timeout * 1000:
+            return False
+        time.sleep(0.1)
+    return True
 
 # ----- Drawing helpers -----
 def clear(bg_pen=BLACK):
@@ -358,6 +419,14 @@ def _dexcom_app_id(region):
     return _DEXCOM_APP_ID_JP if region == "jp" else _DEXCOM_APP_ID_DEFAULT
 
 
+def _close_quietly(resp):
+    """Close a response without letting a close() failure mask the real outcome."""
+    try:
+        resp.close()
+    except Exception:
+        pass
+
+
 def dexcom_login(region, account_id, password):
     url = _dexcom_base(region) + "General/LoginPublisherAccountById"
     body = json.dumps({
@@ -365,24 +434,22 @@ def dexcom_login(region, account_id, password):
         "password": password,
         "applicationId": _dexcom_app_id(region),
     })
+    resp = None
     try:
-        resp = requests.post(url, data=body, headers=_DEXCOM_HEADERS)
-        if resp is None or resp.status_code != 200:
-            try:
-                resp.close()
-            except Exception:
-                pass
+        resp = requests.post(url, data=body, headers=_DEXCOM_HEADERS, timeout=_REQUEST_TIMEOUT_S)
+        if resp.status_code != 200:
             return None
         session_id = resp.json()   # ujson decodes the bare string literal
-        try:
-            resp.close()
-        except Exception:
-            pass
         if not session_id or session_id == _DEXCOM_NULL_SESSION:
             return None
         return session_id
     except Exception:
         return None
+    finally:
+        # Always release the socket, including when json() raises, so a run of
+        # bad responses cannot exhaust lwIP's small socket pool.
+        if resp is not None:
+            _close_quietly(resp)
 
 
 def dexcom_fetch_latest(region, session_id):
@@ -392,22 +459,17 @@ def dexcom_fetch_latest(region, session_id):
            + "?sessionId=" + session_id
            + "&minutes=1440"
            + "&maxCount=1")
+    resp = None
     try:
-        resp = requests.post(url, data="{}", headers=_DEXCOM_HEADERS)
-        if resp is None or resp.status_code != 200:
-            try:
-                resp.close()
-            except Exception:
-                pass
+        resp = requests.post(url, data="{}", headers=_DEXCOM_HEADERS, timeout=_REQUEST_TIMEOUT_S)
+        if resp.status_code != 200:
             return None
-        readings = resp.json()   # list of dicts
-        try:
-            resp.close()
-        except Exception:
-            pass
-        return readings
+        return resp.json()   # list of dicts
     except Exception:
         return None
+    finally:
+        if resp is not None:
+            _close_quietly(resp)
 
 
 def _parse_dexcom_timestamp(wt_str):
@@ -460,22 +522,30 @@ def fetch_latest():
         draw_status("Config error", sub="Set Dexcom creds in secrets.py")
         return None
 
+    # Each network step below can legitimately take a few seconds (TLS handshake
+    # plus the request timeout), so the watchdog is fed before every one to keep
+    # a slow-but-alive sequence of calls from tripping it.
+
     # --- Step 1: ensure we have a session ---
     if _session[0] is None:
+        feed_watchdog()
         _session[0] = dexcom_login(DEXCOM_REGION, DEXCOM_ACCOUNT_ID, DEXCOM_PASSWORD)
         if _session[0] is None:
             return None   # login failed; caller uses staleness logic
 
     # --- Step 2: fetch ---
+    feed_watchdog()
     raw = dexcom_fetch_latest(DEXCOM_REGION, _session[0])
 
     # --- Step 3: session expiry recovery ---
     if raw is None:
         # Attempt one re-login; clear session so next call re-logs if this fails too
         _session[0] = None
+        feed_watchdog()
         _session[0] = dexcom_login(DEXCOM_REGION, DEXCOM_ACCOUNT_ID, DEXCOM_PASSWORD)
         if _session[0] is None:
             return None   # re-auth failed; caller applies 6-min stale rule
+        feed_watchdog()
         raw = dexcom_fetch_latest(DEXCOM_REGION, _session[0])
         if raw is None:
             return None
@@ -494,19 +564,30 @@ def ensure_wifi():
             draw_status("Wi-Fi connected", sub=str(cfg[0]))
             time.sleep(0.5)
             return True
-        # failed
-        draw_status("Wi-Fi failed", sub="Press any button to retry")
-        # wait for button
+        # Failed: retry automatically after a short countdown so an unattended
+        # device recovers once the router is back (e.g. after a power cut). A
+        # button press skips the wait and retries immediately.
+        t0 = time.ticks_ms()
         while True:
+            feed_watchdog()
+            elapsed_ms = time.ticks_diff(time.ticks_ms(), t0)
+            if elapsed_ms >= _WIFI_RETRY_DELAY_S * 1000:
+                break
             if any_button_pressed():
                 # drain
                 time.sleep(0.2)
                 break
-            time.sleep(0.05)
+            remaining_s = _WIFI_RETRY_DELAY_S - elapsed_ms // 1000
+            draw_status("Wi-Fi failed", sub="Retrying in %ds" % remaining_s)
+            time.sleep(0.1)
 
 
 def main():
     global _ntp_synced
+
+    # Arm the hardware watchdog first so a hang anywhere from here on reboots
+    # the board instead of leaving the last frame frozen on screen.
+    _wdt[0] = machine.WDT(timeout=_WDT_TIMEOUT_MS)
 
     ensure_wifi()
 
@@ -514,6 +595,7 @@ def main():
     # Attempt to set the RTC from NTP so that true sensor age can be computed.
     # Three attempts with 2-second gaps; boot continues in fallback mode on failure.
     for attempt in range(_NTP_MAX_RETRIES):
+        feed_watchdog()
         try:
             ntptime.settime()
             _ntp_synced = True
@@ -539,6 +621,7 @@ def main():
     draw_status("Starting", sub="Fetching latest...", dots=True)
 
     while True:
+        feed_watchdog()
         now = time.ticks_ms()
         button_pressed = any_button_pressed()
         need_fetch = time.ticks_diff(now, last_fetch) >= poll_ms or button_pressed
@@ -548,7 +631,13 @@ def main():
                 # Show transient overlay while fetching due to manual refresh
                 draw_bottom_right("Checking for updates", WHITE, scale=1)
                 display.update()
-            data = fetch_latest()
+            # If the Wi-Fi link has dropped, try a bounded rejoin first. Skipping
+            # the fetch while offline lets draw_reading() apply the staleness rule
+            # rather than burning the request timeout on a dead interface.
+            if rejoin_wifi():
+                data = fetch_latest()
+            else:
+                data = None
             if data is not None:
                 ts = data.get("ts_ms")
                 # Determine whether this is a genuinely new reading so we only
@@ -592,9 +681,14 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        # On fatal error, display message
+        # Fatal error: show it briefly, then reboot rather than dropping to the
+        # REPL with the last frame frozen on screen. A fresh boot also clears any
+        # heap fragmentation behind a MemoryError. KeyboardInterrupt is not an
+        # Exception subclass, so Ctrl-C from a REPL still stops the script.
+        feed_watchdog()
         try:
             draw_status("Error", sub=str(e))
-            time.sleep(3)
+            time.sleep(_FATAL_ERROR_PAUSE_S)
         except Exception:
             pass
+        machine.reset()
