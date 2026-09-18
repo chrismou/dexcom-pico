@@ -2,8 +2,9 @@
 
 **Date:** 2026-09-17
 **Branch:** `feature/settings` (branched from `main` at `2870244`; PR targets `main`)
+**PR:** https://github.com/chrismou/dexcom-pico/pull/5
 **Scope:** `src/main.py` (single-file app, new sections), new `tests/` suite, `.gitignore`, `src/secrets.example.py`, `requirements.md`, `README.md`, `CHANGELOG.md`, `CLAUDE.md`
-**Status:** Revision 1 (everything below the "Revision 2" section) is implemented and uncommitted on `feature/settings` (QA and review passed, 112 tests). **Revision 2 is the outstanding work**: user feedback after reviewing the device, to be applied on top of the current working tree. Line numbers in Revision 2 refer to the working-tree `src/main.py` (1950 lines), not to HEAD.
+**Status:** Revision 1 and Revision 2 are both implemented, QA'd and reviewed (188 tests) and committed on `feature/settings`; see the PR above. Line numbers in Revision 2 referred to the pre-Revision-2 working-tree `src/main.py` (1950 lines) and are historical.
 
 ---
 
