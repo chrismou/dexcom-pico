@@ -128,6 +128,19 @@ _TREND_MAP = {
 # Mutable cell holding the current Dexcom session id
 _session = [None]   # _session[0] holds the current session id string or None
 
+# Most recent network failure, for the Device info screen. Network helpers
+# swallow exceptions by design, so this is the only trace of why a fetch
+# or NTP sync failed. Cleared by the next successful fetch.
+_last_net_error = [None]
+
+
+def note_net_error(stage, detail):
+    """Record a short 'stage: detail' description of the latest network failure."""
+    try:
+        _last_net_error[0] = (stage + ": " + str(detail))[:80]
+    except Exception:
+        _last_net_error[0] = stage
+
 # ----- LED alert state -----
 _led_mode = ["off"]   # mutable cell so draw_reading() can update it without global
 _LED_FLASH_PERIOD_MS = 1000
@@ -885,12 +898,15 @@ def dexcom_login(region, account_id, password):
     try:
         resp = requests.post(url, data=body, headers=_DEXCOM_HEADERS, timeout=_REQUEST_TIMEOUT_S)
         if resp.status_code != 200:
+            note_net_error("login", "HTTP %d" % resp.status_code)
             return None
         session_id = resp.json()
         if not session_id or session_id == _DEXCOM_NULL_SESSION:
+            note_net_error("login", "null session")
             return None
         return session_id
-    except Exception:
+    except Exception as e:
+        note_net_error("login", repr(e))
         return None
     finally:
         if resp is not None:
@@ -908,9 +924,13 @@ def dexcom_fetch_latest(region, session_id):
     try:
         resp = requests.post(url, data="{}", headers=_DEXCOM_HEADERS, timeout=_REQUEST_TIMEOUT_S)
         if resp.status_code != 200:
+            note_net_error("fetch", "HTTP %d" % resp.status_code)
             return None
-        return resp.json()
-    except Exception:
+        readings = resp.json()
+        _last_net_error[0] = None   # a successful fetch clears the last failure
+        return readings
+    except Exception as e:
+        note_net_error("fetch", repr(e))
         return None
     finally:
         if resp is not None:
@@ -1813,6 +1833,14 @@ def show_device_info():
         ip = "?"
     draw_text("IP: " + ip, 8, y, WHITE, scale=2, font="bitmap8")
     y += 16
+    # Gateway and DNS: an address with no gateway or DNS explains a "connected
+    # but nothing works" state without needing a serial console.
+    try:
+        cfg = wlan.ifconfig()
+        draw_text("GW: %s  DNS: %s" % (cfg[2], cfg[3]), 8, y, GREY, scale=1, font="bitmap8")
+    except Exception:
+        draw_text("GW/DNS: ?", 8, y, GREY, scale=1, font="bitmap8")
+    y += 10
     # RSSI
     try:
         rssi = wlan.status("rssi")
@@ -1835,6 +1863,13 @@ def show_device_info():
     # Last error (first ~40 chars)
     err = crash["last_error"][:40].replace("\n", " ") if crash["last_error"] else "none"
     draw_text("Last err: " + err, 8, y, GREY, scale=1, font="bitmap8")
+    y += 10
+    # Last network failure (login / fetch / ntp), wrapped over two lines
+    net_err = _last_net_error[0] or "none"
+    draw_text("Net: " + net_err[:40], 8, y, GREY, scale=1, font="bitmap8")
+    if len(net_err) > 40:
+        y += 10
+        draw_text("     " + net_err[40:80], 8, y, GREY, scale=1, font="bitmap8")
 
     draw_text("Any button to return", 8, HEIGHT - 20, GREY, scale=1, font="bitmap8")
     display.update()
@@ -2080,7 +2115,8 @@ def main():
                 ntptime.settime()
             _ntp_synced = True
             break
-        except Exception:
+        except Exception as e:
+            note_net_error("ntp", repr(e))
             if attempt < _NTP_MAX_RETRIES - 1:
                 time.sleep(_NTP_RETRY_DELAY_S)
     if not _ntp_synced:
