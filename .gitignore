@@ -2,3 +2,8 @@
 src/secrets.py
 .claude/settings.local.json
 src/__pycache__
+tests/__pycache__
+src/settings.json
+src/crash.json
+settings.json
+crash.json
