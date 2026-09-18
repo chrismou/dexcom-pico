@@ -94,11 +94,14 @@ The device can operate as a Wi-Fi access point to allow configuration via a phon
 - Displays the AP SSID, a per-session random 8-character password, the setup URL (http://192.168.4.1),
   and a Wi-Fi QR code on the right half of the screen (when the Pimoroni qrcode module is available)
 - Serves an HTML form listing scanned Wi-Fi networks, plus fields for Dexcom account id, password, and region
-- On submit: saves settings, joins the selected network, and verifies Dexcom credentials with one login attempt
-- On Dexcom login failure: reopens the setup page with an error message (Wi-Fi credentials retained)
-- Hold X to cancel setup mode and return to the previous state
-- At boot, and on every exit from setup mode (cancel, timeout or submit), the station interface is cycled off and on and the
-  saved network is rejoined, because the access point session replaces the station's default network route
+- On submit: saves settings, then restarts the device. The next boot joins the selected network and verifies the
+  Dexcom credentials with one login attempt. If the join fails, setup mode reopens with "check the password"; if the
+  Dexcom login fails, it reopens with "check account id, password and region" (Wi-Fi credentials retained)
+- Hold X to cancel setup mode; the device restarts and returns to the reading
+- Every exit from setup mode restarts the device, because raising the access point replaces the station's default
+  network route and only a hard reset restores it on this Wi-Fi driver (cycling the interface does not)
+- A soft reboot from a development tool (Thonny, PyCharm, Ctrl-D) keeps the previous run's network state, so the
+  device converts it into a hard reset at boot
 - Setup mode times out after 10 minutes without an HTTP request
 
 Persistence:
@@ -119,8 +122,9 @@ Resilience:
 
 - Every Dexcom request uses a bounded socket timeout (5 s per operation) so a stalled connection is treated as a
   failed fetch rather than blocking the display loop.
-- After 3 consecutive failed fetches the station interface is cycled and rejoined, so a link that reports
-  connected but cannot route traffic recovers without a power cycle.
+- After 3 consecutive failed fetches: if the link reports connected but the last error was "no route to host"
+  (errno 113) the device restarts, since only a hard reset restores routing; otherwise the station interface is
+  cycled and rejoined to clear a stuck join.
 - Before each poll the Wi-Fi link is checked; if it has dropped, a bounded rejoin (5 s) is attempted without
   replacing the reading on screen.
 - A hardware watchdog (8 s) is armed at startup and fed on every loop tick and between network steps.

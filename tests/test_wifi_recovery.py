@@ -1,10 +1,13 @@
 """
-Tests for station-interface recovery around Wi-Fi setup mode.
+Tests for network recovery around Wi-Fi setup mode and soft reboots.
 
-After an access-point session the CYW43 driver leaves the station without a
-default route, so every exit from setup mode must cycle the station before
-rejoining, and the poll loop must cycle it after persistent fetch failures.
+Once the access point has been up, only a hard reset restores the station's
+default route on the CYW43 driver, so every exit from setup mode reboots and
+the next boot verifies freshly submitted credentials. The poll loop reboots
+when fetches keep failing with "no route to host" while the link is up.
 """
+import os
+import tempfile
 import types
 import unittest
 
@@ -84,13 +87,18 @@ class _PatchMixin:
         self._patch("time", _make_fake_time())
         self._patch("wlan", _WlanRecovering(self.log))
         self._patch("feed_watchdog", lambda: None)
+        self._patch("draw_status", lambda *a, **k: None)
         self._saved_settings = dict(main._settings)
+        main._last_net_error[0] = None
+        main._session[0] = None
 
     def tearDown(self):
         for name, val in self._saved.items():
             setattr(main, name, val)
         main._settings.clear()
         main._settings.update(self._saved_settings)
+        main._last_net_error[0] = None
+        main._session[0] = None
 
     def _patch(self, name, value):
         if name not in self._saved:
@@ -108,36 +116,42 @@ class TestResetStaInterface(_PatchMixin, unittest.TestCase):
         )
 
 
-class TestReconnectAfterSetup(_PatchMixin, unittest.TestCase):
+class TestRestartDevice(_PatchMixin, unittest.TestCase):
 
-    def test_resets_station_then_connects_with_saved_credentials(self):
-        main._settings["wifi_ssid"] = "HomeNet"
-        main._settings["wifi_password"] = "hunter2"
-        self._patch("reset_sta_interface", self.log.spy("reset"))
-        self._patch("connect_wifi", self.log.spy("connect", ("10.0.0.5",)))
+    def test_shows_message_then_hard_resets(self):
+        self._patch("draw_status", self.log.spy("status"))
+        with self.assertRaises(SystemExit):
+            main.restart_device("Leaving setup")
+        self.assertEqual(self.log.calls[0][1][0], "Leaving setup")
 
-        result = main.reconnect_after_setup()
 
-        self.assertTrue(result)
-        self.assertEqual(self.log.names(), ["reset", "connect"])
-        _, args, kwargs = self.log.calls[1]
-        self.assertEqual(args[:2], ("HomeNet", "hunter2"))
-        self.assertEqual(kwargs.get("timeout"), main._SETUP_JOIN_TIMEOUT_S)
+class TestSetupVerifyMarker(_PatchMixin, unittest.TestCase):
 
-    def test_no_ssid_does_nothing(self):
-        main._settings["wifi_ssid"] = ""
-        self._patch("reset_sta_interface", self.log.spy("reset"))
-        self._patch("connect_wifi", self.log.spy("connect", ("10.0.0.5",)))
+    def setUp(self):
+        super().setUp()
+        self._tmp = tempfile.mkdtemp()
+        self._patch("_SETUP_VERIFY_MARKER", os.path.join(self._tmp, "setup_verify"))
 
-        self.assertFalse(main.reconnect_after_setup())
-        self.assertEqual(self.log.names(), [])
+    def test_absent_by_default(self):
+        self.assertFalse(main.take_setup_verify_pending())
 
-    def test_failed_join_returns_false(self):
-        main._settings["wifi_ssid"] = "HomeNet"
-        self._patch("reset_sta_interface", self.log.spy("reset"))
-        self._patch("connect_wifi", self.log.spy("connect", None))
+    def test_set_then_take_is_one_shot(self):
+        main.set_setup_verify_pending()
+        self.assertTrue(main.take_setup_verify_pending())
+        self.assertFalse(main.take_setup_verify_pending())
 
-        self.assertFalse(main.reconnect_after_setup())
+
+class TestIsNoRouteError(unittest.TestCase):
+
+    def test_matches_errno_113(self):
+        self.assertTrue(main.is_no_route_error("login: OSError(113)"))
+        self.assertTrue(main.is_no_route_error("login: OSError(113,)"))
+        self.assertTrue(main.is_no_route_error("ntp: [Errno 113] EHOSTUNREACH"))
+
+    def test_other_errors_do_not_match(self):
+        self.assertFalse(main.is_no_route_error(None))
+        self.assertFalse(main.is_no_route_error("fetch: OSError(110)"))
+        self.assertFalse(main.is_no_route_error("login: HTTP 500"))
 
 
 class TestRunWifiSetupExitPaths(_PatchMixin, unittest.TestCase):
@@ -152,18 +166,16 @@ class TestRunWifiSetupExitPaths(_PatchMixin, unittest.TestCase):
         self._patch("stop_ap", self.log.spy("stop_ap"))
         self._patch("scan_networks", lambda: [])
         self._patch("wait_buttons_released", lambda: None)
-        self._patch("draw_status", lambda *a, **k: None)
-        self._patch("commit_settings", lambda: True)
-        self._patch("gc", types.SimpleNamespace(collect=lambda: None))
+        self._patch("commit_settings", self.log.spy("commit", True))
+        self._patch("set_setup_verify_pending", self.log.spy("mark_verify"))
 
-    def test_cancel_stops_ap_then_reconnects(self):
+    def test_cancel_stops_ap_then_reboots(self):
         self._patch("serve_setup", lambda *a, **k: None)
-        self._patch("reconnect_after_setup", self.log.spy("reconnect", True))
+        with self.assertRaises(SystemExit):
+            main.run_wifi_setup()
+        self.assertEqual(self.log.names(), ["start_ap", "stop_ap"])
 
-        self.assertFalse(main.run_wifi_setup())
-        self.assertEqual(self.log.names(), ["start_ap", "stop_ap", "reconnect"])
-
-    def test_submit_resets_station_before_join(self):
+    def test_submit_saves_marks_verify_then_reboots(self):
         form = {
             "wifi_ssid": "NewNet",
             "wifi_password": "newpass",
@@ -171,16 +183,62 @@ class TestRunWifiSetupExitPaths(_PatchMixin, unittest.TestCase):
             "dexcom_password": "pw",
             "dexcom_region": "ous",
         }
-        self._patch("serve_setup", lambda *a, **k: form)
-        self._patch("reset_sta_interface", self.log.spy("reset"))
-        self._patch("connect_wifi", self.log.spy("connect", ("10.0.0.5",)))
-        self._patch("dexcom_login", lambda *a, **k: "session-id")
+        self._patch("serve_setup", lambda *a, **k: dict(form))
+        with self.assertRaises(SystemExit):
+            main.run_wifi_setup()
+        self.assertEqual(self.log.names(), ["start_ap", "stop_ap", "commit", "mark_verify"])
+        self.assertEqual(main._settings["wifi_ssid"], "NewNet")
+        self.assertEqual(main._settings["dexcom_account_id"], "acct")
 
-        self.assertTrue(main.run_wifi_setup())
-        self.assertEqual(self.log.names(), ["start_ap", "stop_ap", "reset", "connect"])
-        _, args, _ = self.log.calls[3]
-        self.assertEqual(args[:2], ("NewNet", "newpass"))
+    def test_status_message_is_passed_to_page(self):
+        seen = []
+        self._patch("serve_setup", lambda ap, nets, msg: seen.append(msg))
+        with self.assertRaises(SystemExit):
+            main.run_wifi_setup("Could not join")
+        self.assertEqual(seen, ["Could not join"])
+
+
+class TestEnsureWifiAfterSubmit(_PatchMixin, unittest.TestCase):
+
+    def setUp(self):
+        super().setUp()
+        main._settings["wifi_ssid"] = "NewNet"
+        main._settings["wifi_password"] = "newpass"
+        main._settings["dexcom_region"] = "ous"
+        main._settings["dexcom_account_id"] = "acct"
+        main._settings["dexcom_password"] = "pw"
+        self._patch("take_setup_verify_pending", lambda: True)
+        self._patch("run_wifi_setup", self.log.spy("setup"))
+
+    def test_join_and_login_ok_keeps_session(self):
+        self._patch("connect_wifi", self.log.spy("connect", ("10.0.0.5",)))
+        self._patch("dexcom_login", self.log.spy("login", "session-id"))
+        self.assertTrue(main.ensure_wifi())
         self.assertEqual(main._session[0], "session-id")
+        self.assertEqual(self.log.names(), ["connect", "login"])
+
+    def test_login_failure_reenters_setup_with_reason(self):
+        self._patch("connect_wifi", self.log.spy("connect", ("10.0.0.5",)))
+        self._patch("dexcom_login", self.log.spy("login", None))
+        self.assertFalse(main.ensure_wifi())
+        self.assertIsNone(main._session[0])
+        self.assertEqual(self.log.names()[-1], "setup")
+        self.assertIn("Dexcom login failed", self.log.calls[-1][1][0])
+
+    def test_join_failure_reenters_setup_with_password_hint(self):
+        self._patch("connect_wifi", self.log.spy("connect", None))
+        self.assertFalse(main.ensure_wifi())
+        self.assertEqual(self.log.names(), ["connect", "setup"])
+        self.assertIn("NewNet", self.log.calls[-1][1][0])
+        self.assertIn("password", self.log.calls[-1][1][0])
+
+    def test_no_pending_verification_skips_login(self):
+        self._patch("take_setup_verify_pending", lambda: False)
+        self._patch("connect_wifi", self.log.spy("connect", ("10.0.0.5",)))
+        self._patch("dexcom_login", self.log.spy("login", "session-id"))
+        self.assertTrue(main.ensure_wifi())
+        self.assertEqual(self.log.names(), ["connect"])
+        self.assertIsNone(main._session[0])
 
 
 class TestRecoverAfterFetchFailures(_PatchMixin, unittest.TestCase):
@@ -196,18 +254,22 @@ class TestRecoverAfterFetchFailures(_PatchMixin, unittest.TestCase):
             self.assertEqual(main.recover_after_fetch_failures(n), n)
         self.assertEqual(self.log.names(), [])
 
-    def test_at_threshold_resets_and_restarts_count(self):
-        limit = main._FETCH_FAILS_BEFORE_STA_RESET
-        self.assertEqual(main.recover_after_fetch_failures(limit), 0)
+    def test_generic_failure_cycles_station_and_restarts_count(self):
+        main._last_net_error[0] = "fetch: OSError(110)"
+        self.assertEqual(main.recover_after_fetch_failures(main._FETCH_FAILS_BEFORE_STA_RESET), 0)
         self.assertEqual(self.log.names(), ["reset", "rejoin"])
 
-    def test_poll_loop_style_sequence_resets_once_per_run_of_failures(self):
-        limit = main._FETCH_FAILS_BEFORE_STA_RESET
-        failures = 0
-        for _ in range(limit * 2):
-            failures = main.recover_after_fetch_failures(failures + 1)
-        self.assertEqual(self.log.names().count("reset"), 2)
-        self.assertEqual(failures, 0)
+    def test_no_route_with_link_up_reboots(self):
+        main._last_net_error[0] = "login: OSError(113,)"
+        with self.assertRaises(SystemExit):
+            main.recover_after_fetch_failures(main._FETCH_FAILS_BEFORE_STA_RESET)
+        self.assertEqual(self.log.names(), [])
+
+    def test_no_route_with_link_down_cycles_instead(self):
+        main._last_net_error[0] = "login: OSError(113)"
+        main.wlan._connected = False
+        self.assertEqual(main.recover_after_fetch_failures(main._FETCH_FAILS_BEFORE_STA_RESET), 0)
+        self.assertEqual(self.log.names(), ["reset", "rejoin"])
 
 
 if __name__ == "__main__":

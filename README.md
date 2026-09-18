@@ -142,7 +142,7 @@ The Pico raises a WPA2 access point:
 - **URL**: `http://192.168.4.1`
 - A Wi-Fi QR code is shown on the right side of the screen if the `qrcode` library is installed
 
-On the form, select your network (or enter a hidden SSID), enter the Wi-Fi password, your Dexcom account id, Dexcom password, and region. Submit to save and connect. If the Dexcom login fails, the form reopens with an error message and your Wi-Fi credentials are retained. Hold X to cancel.
+On the form, select your network (or enter a hidden SSID), enter the Wi-Fi password, your Dexcom account id, Dexcom password, and region. Submit to save. The Pico restarts, joins the network and checks the Dexcom login; if either fails, the setup page reopens with the reason and your Wi-Fi credentials are retained. Hold X to cancel, which also restarts the Pico. The restart is deliberate: once the setup access point has been up, only a full reset restores normal internet access on the Pico's Wi-Fi chip.
 
 Setup mode times out after 10 minutes without a browser request.
 

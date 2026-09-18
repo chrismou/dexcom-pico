@@ -188,7 +188,6 @@ _HTTP_ACCEPT_TIMEOUT_S  = 0.25
 _HTTP_CLIENT_TIMEOUT_S  = 3
 _HTTP_MAX_HEADER_BYTES  = 2048
 _HTTP_MAX_BODY_BYTES    = 1024
-_SETUP_JOIN_TIMEOUT_S   = 20
 _SETUP_IDLE_TIMEOUT_MS  = 10 * 60 * 1000
 
 # ----- Menu constants -----
@@ -622,30 +621,74 @@ def reset_sta_interface():
         pass
 
 
-def reconnect_after_setup():
-    """Rejoin the saved network after setup mode ends.
+def restart_device(msg):
+    """Show msg briefly, then hard-reset the board.
 
-    Always cycles the station first (see reset_sta_interface). Returns True
-    when connected, False when no SSID is saved or the join failed; the poll
-    loop's rejoin keeps trying in the latter case.
+    Once the access point has been up, only a hard reset reliably restores the
+    station's default route on the CYW43 driver: cycling the interface with
+    active(False)/active(True) was verified on hardware not to fix it. Every
+    exit from setup mode therefore reboots, as does the poll loop when fetches
+    keep failing with "no route to host" while the link reports up.
     """
-    ssid = _settings.get("wifi_ssid")
-    if not ssid:
+    try:
+        draw_status(msg, sub="Restarting...")
+    except Exception:
+        pass
+    feed_watchdog()
+    time.sleep(1)
+    machine.reset()
+
+
+# Marker file written before the post-submit reboot so the next boot knows to
+# verify the new credentials and report failures back into setup mode.
+_SETUP_VERIFY_MARKER = "/setup_verify"
+
+
+def set_setup_verify_pending():
+    """Flag that the next boot must verify freshly submitted credentials."""
+    try:
+        with open(_SETUP_VERIFY_MARKER, "w") as f:
+            f.write("1")
+    except Exception:
+        pass
+
+
+def take_setup_verify_pending():
+    """Return True (once) if the previous boot submitted new credentials."""
+    try:
+        os.stat(_SETUP_VERIFY_MARKER)
+    except Exception:
         return False
-    reset_sta_interface()
-    cfg = connect_wifi(ssid, _settings.get("wifi_password") or "", timeout=_SETUP_JOIN_TIMEOUT_S)
-    return bool(cfg)
+    try:
+        os.remove(_SETUP_VERIFY_MARKER)
+    except Exception:
+        pass
+    return True
+
+
+def is_no_route_error(err):
+    """True when a recorded network error is EHOSTUNREACH (MicroPython errno 113)."""
+    return bool(err) and ("OSError(113" in err or "[Errno 113]" in err)
 
 
 def recover_after_fetch_failures(failures):
-    """Track consecutive failed fetches and cycle the station when they persist.
+    """Track consecutive failed fetches and recover when they persist.
 
     Called by the poll loop with the running count after each failed fetch.
-    Once the count reaches _FETCH_FAILS_BEFORE_STA_RESET the station is reset
-    and rejoined, and the count restarts. Returns the updated count.
+    Once the count reaches _FETCH_FAILS_BEFORE_STA_RESET: if the link is up
+    but the last error was "no route to host", the network stack is broken
+    and only a reboot fixes it; otherwise the station is cycled and rejoined
+    to clear a stuck join. Returns the updated count (0 after a recovery).
     """
     if failures < _FETCH_FAILS_BEFORE_STA_RESET:
         return failures
+    try:
+        link_up = wlan.isconnected()
+    except Exception:
+        link_up = False
+    if link_up and is_no_route_error(_last_net_error[0]):
+        restart_device("Network route lost")
+        return 0   # unreachable on device; keeps tests and stubs sane
     reset_sta_interface()
     rejoin_wifi()
     return 0
@@ -1530,79 +1573,35 @@ def serve_setup(ap_info, networks, status_msg):
                 pass
 
 
-def run_wifi_setup():
+def run_wifi_setup(status_msg=None):
     """
-    Enter AP+HTTP setup mode.
-    Returns True if setup completed successfully (Wi-Fi joined + Dexcom verified),
-    False if cancelled or timed out.
+    Enter AP+HTTP setup mode. Never returns on device: every exit reboots.
+
+    Cancel or timeout reboots so the station comes back with a working route.
+    Submit persists the form, flags verification for the next boot, and reboots;
+    ensure_wifi() then joins the new network and checks the Dexcom login, and
+    re-enters setup with the reason if either fails.
+    status_msg: optional error to show on the page (from a failed verification).
     """
     ap_ssid_str  = ap_ssid()
     ap_password  = generate_ap_password()
     ap_info      = {"ssid": ap_ssid_str, "password": ap_password}
-    status_msg   = None
 
-    networks = []
     ap = start_ap(ap_ssid_str, ap_password)
     networks = scan_networks()
 
-    while True:
-        result = serve_setup(ap_info, networks, status_msg)
-        if result is None:
-            # Cancelled or timed out: the AP session has replaced the station's
-            # default route, so rejoin explicitly rather than trusting the link.
-            stop_ap(ap)
-            wait_buttons_released()
-            reconnect_after_setup()
-            return False
+    result = serve_setup(ap_info, networks, status_msg)
+    stop_ap(ap)
+    if result is None:
+        wait_buttons_released()
+        restart_device("Leaving setup")
+        return False   # unreachable on device
 
-        # Persist before join
-        _settings.update(result)
-        commit_settings()
-        stop_ap(ap)
-        gc.collect()
-
-        ssid = _settings["wifi_ssid"]
-        pw   = _settings["wifi_password"]
-        draw_status("Joining " + ssid, dots=True)
-        reset_sta_interface()   # restore the station as the default route
-        cfg = connect_wifi(ssid, pw, timeout=_SETUP_JOIN_TIMEOUT_S)
-
-        if not cfg:
-            draw_status("Wi-Fi failed", sub="Reopening setup...")
-            time.sleep(2)
-            status_msg = "Could not join '" + ssid + "' - check the password"
-            ap = start_ap(ap_ssid_str, ap_password)
-            networks = scan_networks()
-            continue
-
-        draw_status("Wi-Fi connected", sub=str(cfg[0]))
-        time.sleep(1)
-
-        # Verify Dexcom credentials
-        region     = _settings["dexcom_region"]
-        account_id = _settings["dexcom_account_id"]
-        dex_pw     = _settings["dexcom_password"]
-        draw_status("Checking Dexcom login", dots=True)
-        feed_watchdog()
-        session = dexcom_login(region, account_id, dex_pw)
-
-        if session:
-            _session[0] = session
-            draw_status("Dexcom login OK", sub="Starting...")
-            time.sleep(1.5)
-            return True
-        else:
-            _session[0] = None
-            draw_status("Dexcom login failed", sub="Reopening setup...")
-            time.sleep(2)
-            try:
-                wlan.disconnect()
-            except Exception:
-                pass
-            status_msg = "Wi-Fi joined, but Dexcom login failed - check account id, password and region"
-            ap = start_ap(ap_ssid_str, ap_password)
-            networks = scan_networks()
-            continue
+    _settings.update(result)
+    commit_settings()
+    set_setup_verify_pending()
+    restart_device("Applying Wi-Fi settings")
+    return True   # unreachable on device
 
 
 # ----- Hold detector (pure, testable) -----
@@ -2063,15 +2062,42 @@ def run_menu(last_state):
 
 # ----- Main boot sequence -----
 
+def verify_dexcom_after_setup():
+    """Check freshly submitted Dexcom credentials once Wi-Fi is up.
+
+    On success the session is kept for the first poll. On failure setup mode
+    is re-entered with the reason (which reboots on exit).
+    """
+    draw_status("Checking Dexcom login", dots=True)
+    feed_watchdog()
+    session = dexcom_login(
+        _settings.get("dexcom_region"),
+        _settings.get("dexcom_account_id"),
+        _settings.get("dexcom_password"),
+    )
+    if session:
+        _session[0] = session
+        draw_status("Dexcom login OK", sub="Starting...")
+        time.sleep(1)
+        return True
+    _session[0] = None
+    run_wifi_setup("Wi-Fi joined, but Dexcom login failed - check account id, password and region")
+    return False   # unreachable on device
+
+
 def ensure_wifi():
-    """Connect to Wi-Fi, entering setup mode if SSID is empty or retrying on failure."""
-    # If no SSID configured, go straight to setup
+    """Connect to Wi-Fi, entering setup mode if SSID is empty or retrying on failure.
+
+    When the previous boot submitted the setup form, the join and the Dexcom
+    login are verified here and any failure sends the user straight back to
+    the setup page with the reason, instead of retrying forever.
+    """
+    verify_pending = take_setup_verify_pending()
+
+    # If no SSID configured, go straight to setup (which reboots on exit)
     if not _settings.get("wifi_ssid"):
-        while True:
-            ok = run_wifi_setup()
-            if ok:
-                return True
-            # Cancelled: keep asking (nothing to connect to)
+        run_wifi_setup()
+        return False   # unreachable on device
 
     while True:
         draw_status("Wi-Fi", sub="Connecting...", dots=True)
@@ -2079,7 +2105,12 @@ def ensure_wifi():
         if cfg:
             draw_status("Wi-Fi connected", sub=str(cfg[0]))
             time.sleep(0.5)
+            if verify_pending:
+                return verify_dexcom_after_setup()
             return True
+        if verify_pending:
+            run_wifi_setup("Could not join '%s' - check the password" % _settings["wifi_ssid"])
+            return False   # unreachable on device
         t0 = time.ticks_ms()
         while True:
             feed_watchdog()
@@ -2121,8 +2152,13 @@ def main():
 
     # A soft reboot (Thonny / PyCharm / Ctrl-D) keeps the CYW43 chip and the
     # lwIP stack exactly as the previous run left them, including a missing
-    # default route after an access-point session. Start from a known state.
-    reset_sta_interface()
+    # default route after an access-point session. The station can only be
+    # active this early after a soft reboot, so turn it into a hard reset.
+    try:
+        if wlan.active():
+            restart_device("Soft reboot detected")
+    except Exception:
+        pass
 
     ensure_wifi()
 
