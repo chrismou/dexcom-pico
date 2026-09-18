@@ -151,6 +151,13 @@ _REQUEST_TIMEOUT_S = 5
 _WDT_TIMEOUT_MS = 8000
 _WIFI_REJOIN_WAIT_S = 5
 _WIFI_RETRY_DELAY_S = 5
+
+# Pause between deactivating and reactivating the station interface.
+_STA_RESET_PAUSE_MS = 500
+
+# Consecutive failed fetches (with the link reporting up or down) before the
+# station interface is cycled as a last resort to restore routing.
+_FETCH_FAILS_BEFORE_STA_RESET = 3
 _FATAL_ERROR_PAUSE_S = 3
 
 # ----- Settings paths -----
@@ -302,7 +309,7 @@ def _coerce_value(kind, extra, val):
     """
     Coerce val according to (kind, extra). Returns the coerced value.
     Raises on failure so the caller can keep the default.
-    Does not handle "alert" kind — that is resolved before this call.
+    Does not handle "alert" kind - that is resolved before this call.
     """
     if kind == "str":
         max_len = extra if extra is not None else 256
@@ -577,6 +584,58 @@ def rejoin_wifi(timeout=_WIFI_REJOIN_WAIT_S):
             return False
         time.sleep(0.1)
     return True
+
+
+def reset_sta_interface():
+    """Cycle the station interface off and on.
+
+    The CYW43 driver makes whichever interface was brought up most recently
+    lwIP's default route. After an access-point session that default is gone,
+    so the station keeps its address and link but cannot reach the internet.
+    Reactivating the station re-runs the driver's network init, which restores
+    the route. It also clears any stuck join state.
+    """
+    try:
+        wlan.active(False)
+    except Exception:
+        pass
+    t0 = time.ticks_ms()
+    while time.ticks_diff(time.ticks_ms(), t0) < _STA_RESET_PAUSE_MS:
+        feed_watchdog()
+        time.sleep(0.1)
+    try:
+        wlan.active(True)
+    except Exception:
+        pass
+
+
+def reconnect_after_setup():
+    """Rejoin the saved network after setup mode ends.
+
+    Always cycles the station first (see reset_sta_interface). Returns True
+    when connected, False when no SSID is saved or the join failed; the poll
+    loop's rejoin keeps trying in the latter case.
+    """
+    ssid = _settings.get("wifi_ssid")
+    if not ssid:
+        return False
+    reset_sta_interface()
+    cfg = connect_wifi(ssid, _settings.get("wifi_password") or "", timeout=_SETUP_JOIN_TIMEOUT_S)
+    return bool(cfg)
+
+
+def recover_after_fetch_failures(failures):
+    """Track consecutive failed fetches and cycle the station when they persist.
+
+    Called by the poll loop with the running count after each failed fetch.
+    Once the count reaches _FETCH_FAILS_BEFORE_STA_RESET the station is reset
+    and rejoined, and the count restarts. Returns the updated count.
+    """
+    if failures < _FETCH_FAILS_BEFORE_STA_RESET:
+        return failures
+    reset_sta_interface()
+    rejoin_wifi()
+    return 0
 
 
 def any_button_pressed():
@@ -1469,8 +1528,11 @@ def run_wifi_setup():
     while True:
         result = serve_setup(ap_info, networks, status_msg)
         if result is None:
+            # Cancelled or timed out: the AP session has replaced the station's
+            # default route, so rejoin explicitly rather than trusting the link.
             stop_ap(ap)
             wait_buttons_released()
+            reconnect_after_setup()
             return False
 
         # Persist before join
@@ -1482,6 +1544,7 @@ def run_wifi_setup():
         ssid = _settings["wifi_ssid"]
         pw   = _settings["wifi_password"]
         draw_status("Joining " + ssid, dots=True)
+        reset_sta_interface()   # restore the station as the default route
         cfg = connect_wifi(ssid, pw, timeout=_SETUP_JOIN_TIMEOUT_S)
 
         if not cfg:
@@ -2033,6 +2096,7 @@ def main():
     }
     last_fetch = 0
     poll_ms = 30000
+    fetch_failures = 0   # consecutive failed fetches, see recover_after_fetch_failures
 
     draw_status("Starting", sub="Fetching latest...", dots=True)
 
@@ -2064,6 +2128,12 @@ def main():
                 data = fetch_latest()
             else:
                 data = None
+            # Safety net: persistent failures with a link that looks healthy
+            # usually mean the default route is gone; cycle the station.
+            if data is None:
+                fetch_failures = recover_after_fetch_failures(fetch_failures + 1)
+            else:
+                fetch_failures = 0
             if data is not None:
                 ts = data.get("ts_ms")
                 is_first = last_state.get("mg_dl") is None

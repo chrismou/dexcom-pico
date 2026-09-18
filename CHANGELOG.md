@@ -46,13 +46,14 @@ All notable changes to this project will be documented in this file.
 - **Wi-Fi reconnect** - The poll loop now checks the link before each fetch and attempts a bounded rejoin if it has dropped, keeping the current reading and staleness state on screen.
 - **Reboot on fatal error** - An unhandled exception now shows the error screen for 3 seconds and then resets the board, rather than exiting to the REPL.
 - **Socket leak on malformed responses** - HTTP responses are now always closed, including when JSON decoding fails, so a run of bad responses can no longer exhaust the socket pool.
+- **No readings after leaving Wi-Fi setup** - Raising the setup access point makes it the default network route in the CYW43 driver, and tearing it down left the station connected with an address but unable to reach the internet, so every fetch failed until a power cycle. Every exit from setup mode (cancel, timeout or submit) now cycles the station interface and rejoins the saved network. As a safety net the poll loop also cycles the station after 3 consecutive failed fetches.
 
 ### Technical Notes
 
 - Settings and crash log use absolute root paths (`/settings.json`, `/crash.json`) regardless of where `main.py` lives.
 - The RP2350 watchdog cannot be disabled once armed. Stopping `main.py` from Thonny will reboot within ~8 seconds.
 - `wlan.scan()` is the only un-feedable blocking call (blocking C code, typically 1-3 s). The watchdog is fed immediately before and after; if firmware makes this slower than ~7 s the device may reboot during setup.
-- STA and AP interfaces coexist during setup (needed for scanning), but STA is disconnected from the home network before the AP is raised. After setup, `connect_wifi` reconnects explicitly.
+- STA and AP interfaces coexist during setup (needed for scanning), but STA is disconnected from the home network before the AP is raised. Bringing the AP up replaces the station as lwIP's default route, so every exit from setup cycles the station (`wlan.active(False)` then `wlan.active(True)`) before `connect_wifi` rejoins; a connected link with an address is not proof that routing works.
 - Epoch reconciliation (`_PICO_EPOCH_OFFSET_S`) is detected at runtime from `time.gmtime(0)[0]`; do not use a hard-coded offset.
 - Glucose values are stored internally as raw mg/dL integers; unit conversion (`_MMOL_FACTOR`) and formatting happen at draw time only.
 - A legacy `stale_minutes` key in `settings.json` is ignored and removed on the next save.
