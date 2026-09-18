@@ -1817,60 +1817,74 @@ def draw_menu(state):
 
 # ----- Device info screen -----
 
-def show_device_info():
-    """Show device info screen; any button returns."""
+# Plain-language hints for the errno values most likely to reach the display.
+# Values are MicroPython's (Linux-style) errno numbers.
+_ERRNO_HINTS = {
+    "-2":  "DNS lookup failed",
+    "104": "Connection reset",
+    "110": "Timed out",
+    "113": "No route to host",
+    "115": "Connect in progress",
+}
+
+
+def describe_net_error(err):
+    """Return err with a plain-language hint appended when it carries a known errno."""
+    if not err:
+        return "none"
+    for code, hint in _ERRNO_HINTS.items():
+        if "OSError(" + code + ")" in err or "[Errno " + code + "]" in err:
+            return err + " = " + hint
+    return err
+
+
+def _device_info_lines():
+    """Build the Device info rows as (text, colour) pairs; pure apart from reads."""
     crash = read_crash_log()
+    lines = [("SSID: " + str(_settings.get("wifi_ssid", "?")), WHITE)]
+    try:
+        cfg = wlan.ifconfig() if wlan.isconnected() else None
+    except Exception:
+        cfg = None
+    if cfg:
+        lines.append(("IP: " + cfg[0], WHITE))
+        lines.append(("GW: " + cfg[2], WHITE))
+        lines.append(("DNS: " + cfg[3], WHITE))
+    else:
+        lines.append(("IP: not connected", WHITE))
+    try:
+        lines.append(("RSSI: %d dBm" % wlan.status("rssi"), WHITE))
+    except Exception:
+        lines.append(("RSSI: ?", WHITE))
+    lines.append(("NTP: " + ("synced" if _ntp_synced else "not synced"), WHITE))
+    try:
+        lines.append(("Free: %d KB" % (gc.mem_free() // 1024), WHITE))
+    except Exception:
+        pass
+    lines.append(("Crashes: %d  WDT: %d" % (crash["crashes"], crash["wdt_resets"]), WHITE))
+    # One error line: the live network failure if any, else the crash log's.
+    net_err = _last_net_error[0]
+    if net_err:
+        lines.append(("Net: " + describe_net_error(net_err), YELLOW))
+    elif crash["last_error"]:
+        lines.append(("Last err: " + crash["last_error"][:60].replace("\n", " "), YELLOW))
+    return lines
+
+
+def show_device_info():
+    """Show device info screen at a readable scale; any button returns."""
     clear()
     draw_text("Device info", 8, 8, CYAN, scale=2)
     y = 32
-    # SSID
-    draw_text("SSID: " + _settings.get("wifi_ssid", "?"), 8, y, WHITE, scale=2, font="bitmap8")
-    y += 16
-    # IP
-    try:
-        ip = wlan.ifconfig()[0] if wlan.isconnected() else "not connected"
-    except Exception:
-        ip = "?"
-    draw_text("IP: " + ip, 8, y, WHITE, scale=2, font="bitmap8")
-    y += 16
-    # Gateway and DNS: an address with no gateway or DNS explains a "connected
-    # but nothing works" state without needing a serial console.
-    try:
-        cfg = wlan.ifconfig()
-        draw_text("GW: %s  DNS: %s" % (cfg[2], cfg[3]), 8, y, GREY, scale=1, font="bitmap8")
-    except Exception:
-        draw_text("GW/DNS: ?", 8, y, GREY, scale=1, font="bitmap8")
-    y += 10
-    # RSSI
-    try:
-        rssi = wlan.status("rssi")
-        draw_text("RSSI: %d dBm" % rssi, 8, y, WHITE, scale=2, font="bitmap8")
-    except Exception:
-        draw_text("RSSI: ?", 8, y, WHITE, scale=2, font="bitmap8")
-    y += 16
-    # NTP
-    draw_text("NTP: " + ("synced" if _ntp_synced else "not synced"), 8, y, WHITE, scale=2, font="bitmap8")
-    y += 16
-    # Memory
-    try:
-        draw_text("Free mem: %d bytes" % gc.mem_free(), 8, y, WHITE, scale=2, font="bitmap8")
-    except Exception:
-        pass
-    y += 16
-    # Crash counts
-    draw_text("Crashes: %d  WDT: %d" % (crash["crashes"], crash["wdt_resets"]), 8, y, WHITE, scale=2, font="bitmap8")
-    y += 16
-    # Last error (first ~40 chars)
-    err = crash["last_error"][:40].replace("\n", " ") if crash["last_error"] else "none"
-    draw_text("Last err: " + err, 8, y, GREY, scale=1, font="bitmap8")
-    y += 10
-    # Last network failure (login / fetch / ntp), wrapped over two lines
-    net_err = _last_net_error[0] or "none"
-    draw_text("Net: " + net_err[:40], 8, y, GREY, scale=1, font="bitmap8")
-    if len(net_err) > 40:
-        y += 10
-        draw_text("     " + net_err[40:80], 8, y, GREY, scale=1, font="bitmap8")
-
+    row_h = 16               # bitmap8 at scale 2
+    chars_per_row = (WIDTH - 16) // 16
+    for text, colour in _device_info_lines():
+        # draw_text wraps on spaces at WIDTH; advance by the rows it will use.
+        rows = max(1, (len(text) + chars_per_row - 1) // chars_per_row)
+        if y + rows * row_h > HEIGHT - 24:
+            break
+        draw_text(text, 8, y, colour, scale=2, font="bitmap8")
+        y += rows * row_h
     draw_text("Any button to return", 8, HEIGHT - 20, GREY, scale=1, font="bitmap8")
     display.update()
 
@@ -2104,6 +2118,11 @@ def main():
     _settings.update(load_settings())
     _settings_saved.update(_settings)
     apply_settings()
+
+    # A soft reboot (Thonny / PyCharm / Ctrl-D) keeps the CYW43 chip and the
+    # lwIP stack exactly as the previous run left them, including a missing
+    # default route after an access-point session. Start from a known state.
+    reset_sta_interface()
 
     ensure_wifi()
 

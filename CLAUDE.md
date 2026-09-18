@@ -45,6 +45,10 @@ Key cross-cutting concepts that span the file:
 
 - **Wi-Fi setup mode** (`run_wifi_setup`, `serve_setup`). The device raises a WPA2 AP and serves an HTML form. `wlan.scan()` is the only un-feedable blocking C call (1-3 s typically); the watchdog is fed immediately before and after. Do not move the scan inside the HTTP accept loop. STA and AP coexist during setup. Bringing the AP up makes it lwIP's default route in the CYW43 driver, and tearing it down leaves the STA with an address and link but no route to the internet, so **every** exit from setup (cancel, timeout, submit) must call `reset_sta_interface()` before rejoining (`reconnect_after_setup` / `connect_wifi`); do not rely on `rejoin_wifi`, which trusts `isconnected()`. The poll loop also calls `recover_after_fetch_failures`, which cycles the STA after `_FETCH_FAILS_BEFORE_STA_RESET` consecutive failed fetches. Setup mode cannot run concurrently with the poll loop.
 
+- **Boot network reset** (`reset_sta_interface()` at the top of `main()` before `ensure_wifi`). A soft reboot (Thonny, PyCharm, Ctrl-D) does not reinitialise the CYW43 chip or lwIP, so the previous run's state, including a missing default route, survives. Keep the boot-time cycle; only a power cycle is otherwise equivalent.
+
+- **Network error trace** (`_last_net_error`, `note_net_error`, `describe_net_error`). Network helpers still swallow exceptions and return None, but they record a short "stage: repr(e)" first, cleared by the next successful fetch. Device info shows it with an errno hint (113 = no route to host). When adding a network call, record its failure the same way rather than adding prints.
+
 - **Crash log** (`write_crash_log`, `read_crash_log`, `_bump_wdt_resets`). Written on fatal errors and on WDT-reset detection at boot. `write_crash_log` is inside `try/except` in the fatal handler so it cannot mask the reboot. Direct write (no tmp+rename) is acceptable for the crash path; `read_crash_log` tolerates corruption.
 
 ## Conventions

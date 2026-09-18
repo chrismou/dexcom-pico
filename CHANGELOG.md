@@ -20,7 +20,7 @@ All notable changes to this project will be documented in this file.
 - **Persistent settings in `/settings.json`** - Atomic write (tmp + rename) to LittleFS flash. Settings survive reboots; a corrupt or missing file falls back to defaults. Only written on confirmed changes.
 - **`secrets.py` now optional** - If `/settings.json` exists with all keys, `secrets.py` is not needed. The file is still supported as a credential fallback for keys absent from the settings file.
 - **Crash log at `/crash.json`** - Records crash count, watchdog reset count, last exception traceback (up to 400 chars). Written on fatal errors; watchdog resets are detected at boot and increment `wdt_resets`. Viewable from Settings > Device info.
-- **Device info screen** - Accessible from the settings menu. Shows SSID, IP address, RSSI, NTP sync status, free memory, crash count, watchdog reset count, and last error.
+- **Device info screen** - Accessible from the settings menu. Shows SSID, IP address, gateway, DNS server, RSSI, NTP sync status, free memory, crash count, watchdog reset count, and the most recent network failure (login, fetch or NTP) with a plain-language hint for common errno values, e.g. "OSError(113) = No route to host". All rows are drawn at the readable scale-2 size.
 - **LED alerts toggle** - "LED alerts" on/off toggle in the settings menu disables the RGB LED indicator without changing thresholds.
 - **CPython unit test suite** - `tests/` directory with `unittest` tests for settings validation, glucose helpers, HTTP parsing, form decoding, menu state machine, and hold detection. Run with `.venv/bin/python3 -m unittest discover -s tests`.
 
@@ -46,7 +46,7 @@ All notable changes to this project will be documented in this file.
 - **Wi-Fi reconnect** - The poll loop now checks the link before each fetch and attempts a bounded rejoin if it has dropped, keeping the current reading and staleness state on screen.
 - **Reboot on fatal error** - An unhandled exception now shows the error screen for 3 seconds and then resets the board, rather than exiting to the REPL.
 - **Socket leak on malformed responses** - HTTP responses are now always closed, including when JSON decoding fails, so a run of bad responses can no longer exhaust the socket pool.
-- **No readings after leaving Wi-Fi setup** - Raising the setup access point makes it the default network route in the CYW43 driver, and tearing it down left the station connected with an address but unable to reach the internet, so every fetch failed until a power cycle. Every exit from setup mode (cancel, timeout or submit) now cycles the station interface and rejoins the saved network. As a safety net the poll loop also cycles the station after 3 consecutive failed fetches.
+- **No readings after leaving Wi-Fi setup** - Raising the setup access point makes it the default network route in the CYW43 driver, and tearing it down left the station connected with an address but unable to reach the internet, so every fetch failed until a power cycle. Every exit from setup mode (cancel, timeout or submit) now cycles the station interface and rejoins the saved network. As a safety net the poll loop also cycles the station after 3 consecutive failed fetches. The station is also cycled once at boot, because a soft reboot from Thonny or PyCharm keeps the Wi-Fi chip and network stack exactly as the previous run left them, including the broken route.
 
 ### Technical Notes
 

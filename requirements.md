@@ -97,7 +97,7 @@ The device can operate as a Wi-Fi access point to allow configuration via a phon
 - On submit: saves settings, joins the selected network, and verifies Dexcom credentials with one login attempt
 - On Dexcom login failure: reopens the setup page with an error message (Wi-Fi credentials retained)
 - Hold X to cancel setup mode and return to the previous state
-- On every exit from setup mode (cancel, timeout or submit) the station interface is cycled off and on and the
+- At boot, and on every exit from setup mode (cancel, timeout or submit), the station interface is cycled off and on and the
   saved network is rejoined, because the access point session replaces the station's default network route
 - Setup mode times out after 10 minutes without an HTTP request
 
