@@ -168,6 +168,15 @@ _WIFI_RETRY_DELAY_S = 5
 # Pause between deactivating and reactivating the station interface.
 _STA_RESET_PAUSE_MS = 500
 
+# Main-screen loop: sample the buttons every tick so quick taps are not missed,
+# but only repaint the reading about once a second (it shows whole minutes).
+_POLL_TICK_S        = 0.05
+_REDRAW_INTERVAL_MS = 1000
+
+# Longest the menu waits for the opening button press to be released before it
+# starts sampling. A stuck button therefore degrades to the old behaviour.
+_MENU_ENTRY_RELEASE_MS = 2000
+
 # Consecutive failed fetches (with the link reporting up or down) before the
 # station interface is cycled as a last resort to restore routing.
 _FETCH_FAILS_BEFORE_STA_RESET = 3
@@ -703,11 +712,16 @@ def any_button_pressed():
     return a or b or x or y
 
 
-def wait_buttons_released():
-    """Spin until all four buttons are physically released."""
+def wait_buttons_released(timeout_ms=None):
+    """Spin until all four buttons are physically released.
+    timeout_ms caps the wait (None = unbounded) so a stuck button cannot hang a screen.
+    """
+    t0 = time.ticks_ms()
     while True:
         feed_watchdog()
         if not button_a.raw() and not button_b.raw() and not button_x.raw() and not button_y.raw():
+            break
+        if timeout_ms is not None and time.ticks_diff(time.ticks_ms(), t0) >= timeout_ms:
             break
         time.sleep(0.05)
 
@@ -1919,6 +1933,11 @@ def run_menu(last_state):
 
     draw_menu(state)
 
+    # The X press that opened the menu is usually still held here. Sampling it
+    # now would register its release as a short press, which at the top level
+    # means "back" and closes the menu again immediately.
+    wait_buttons_released(_MENU_ENTRY_RELEASE_MS)
+
     while not state["closed"]:
         feed_watchdog()
         update_led()
@@ -2188,6 +2207,7 @@ def main():
     last_fetch = 0
     poll_ms = 30000
     fetch_failures = 0   # consecutive failed fetches, see recover_after_fetch_failures
+    last_draw = 0        # ticks_ms of the last reading repaint, see _REDRAW_INTERVAL_MS
 
     draw_status("Starting", sub="Fetching latest...", dots=True)
 
@@ -2244,12 +2264,16 @@ def main():
                 draw_reading(last_state)
             else:
                 draw_reading(last_state)
-        else:
-            if last_state.get("received_ms") is not None:
-                draw_reading(last_state)
+            last_draw = time.ticks_ms()
+        elif (last_state.get("received_ms") is not None
+              and time.ticks_diff(now, last_draw) >= _REDRAW_INTERVAL_MS):
+            # Periodic refresh of the age text; throttled so the buttons are
+            # sampled far more often than the screen is repainted.
+            draw_reading(last_state)
+            last_draw = now
 
         update_led()
-        time.sleep(0.2)
+        time.sleep(_POLL_TICK_S)
 
 
 if __name__ == "__main__":

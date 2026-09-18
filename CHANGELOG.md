@@ -31,6 +31,8 @@ All notable changes to this project will be documented in this file.
 - **Bottom-right corner of the glucose display** no longer shows the trend-direction text label by default. The trend arrow remains unchanged.
 - **X button no longer triggers a fetch** on the main screen - it now opens the settings menu. A, B, and Y still force an immediate refresh.
 - **All four buttons are read every tick** (no short-circuit) so X edge state is never missed.
+- **Main-screen buttons sampled every 50 ms** (was 200 ms, with a full repaint every tick), so quick taps are no longer missed. The reading is now repainted about once a second instead; the staleness gate still uses the true age, only the paint is throttled.
+- **Menu waits for the opening press to be released** (up to 2 s) before it starts sampling, so the release of the X press that opened it can no longer register as "back" and close the menu immediately.
 - **Stale threshold** is hard-coded at 6 minutes (not configurable). All three staleness-dependent behaviours (`---` display, solid-red LED, "Previous:" corner) use this value.
 - **Alert thresholds** are configurable via the settings menu and are unit-dependent (mmol/L: 4.0/14.0; mg/dL: 70/180 defaults).
 - **Dexcom region labels** in the settings menu and setup page now show full names: "Rest of the world", "United States", "Japan" (stored values remain `ous`/`us`/`jp`).

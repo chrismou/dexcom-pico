@@ -143,9 +143,15 @@ class TestRunMenuIntegration(unittest.TestCase):
         self._orig_hold  = main._MENU_HOLD_MS
         main._MENU_HOLD_MS = 1
 
+        # The release wait at menu entry reads raw() and would consume the
+        # scripted sequences below; it has its own test in TestMenuEntryRelease.
+        self._orig_wait = main.wait_buttons_released
+        main.wait_buttons_released = lambda *a, **k: None
+
     def tearDown(self):
         main.time          = self._orig_time
         main._MENU_HOLD_MS = self._orig_hold
+        main.wait_buttons_released = self._orig_wait
 
     def _script_button(self, btn, reads=(), raws=()):
         """Replace a Button's read() and raw() with scripted sequences."""
@@ -288,6 +294,50 @@ def _valid_form_body():
         "ssid=HomeNet&ssid_other=&wifi_password=wifipass"
         "&dexcom_account_id=acct-uuid&dexcom_password=dexpass&dexcom_region=ous"
     )
+
+
+class TestMenuEntryRelease(unittest.TestCase):
+    """The X press that opens the menu must not be read as 'back' by the menu."""
+
+    def setUp(self):
+        main._settings.clear()
+        main._settings.update(main.default_settings())
+        self._orig_time = main.time
+        self._orig_hold = main._MENU_HOLD_MS
+        self._orig_raw  = (main.button_a.raw, main.button_b.raw, main.button_x.raw, main.button_y.raw)
+        self._orig_read = (main.button_a.read, main.button_b.read)
+        main.time = _make_fake_time(step_ms=50)
+        main._MENU_HOLD_MS = 1
+        main.button_a.read = lambda: False
+        main.button_b.read = lambda: False
+        main.button_a.raw  = lambda: False
+        main.button_b.raw  = lambda: False
+        main.button_y.raw  = lambda: False
+
+    def tearDown(self):
+        main.time = self._orig_time
+        main._MENU_HOLD_MS = self._orig_hold
+        (main.button_a.raw, main.button_b.raw, main.button_x.raw, main.button_y.raw) = self._orig_raw
+        (main.button_a.read, main.button_b.read) = self._orig_read
+
+    def test_held_x_at_entry_does_not_close_menu(self):
+        # X is still held for the first sample, then released, then idle, then
+        # a genuine hold (two consecutive True with the 1 ms threshold) exits.
+        # Without the entry wait, the release would be a short press = "back"
+        # and the menu would close after two ticks, leaving values unconsumed.
+        x_raw_q = [True, False, False, False, True, True]
+        main.button_x.raw = lambda: x_raw_q.pop(0) if x_raw_q else False
+
+        main.run_menu(None)
+
+        self.assertEqual(x_raw_q, [], "menu closed early on the opening press")
+
+    def test_entry_wait_gives_up_on_stuck_button(self):
+        main.button_x.raw = lambda: True
+        main.wait_buttons_released(main._MENU_ENTRY_RELEASE_MS)   # must return
+        # With the fake clock stepping 50 ms per call, the wait must have
+        # advanced the clock past the timeout rather than spun forever.
+        self.assertGreaterEqual(main.time.ticks_ms(), main._MENU_ENTRY_RELEASE_MS)
 
 
 class TestServeSetup(unittest.TestCase):

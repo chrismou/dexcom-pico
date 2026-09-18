@@ -69,6 +69,9 @@ Button interactions:
 - **X (top-right)**: Opens the settings menu. Does not trigger a fetch.
 - **A (top-left), B (bottom-left), Y (bottom-right)**: Trigger an immediate API refresh on the main screen.
 - In the settings menu: A = up, B = down, Y = select/confirm, X = back, hold X = exit.
+- Buttons are sampled every 50 ms on the main screen so a quick tap registers; the reading itself is repainted
+  about once a second. The menu waits for the opening press to be released (up to 2 s) before acting on buttons,
+  so opening it can never immediately close it.
 
 Settings menu (opened by pressing X):
 
