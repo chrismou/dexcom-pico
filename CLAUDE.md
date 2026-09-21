@@ -4,40 +4,73 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A single-file MicroPython app (`src/main.py`) that runs **on-device** on a Raspberry Pi Pico 2 W with a Pimoroni Display Pack 2.8. It authenticates directly against the Dexcom Share API and displays the latest glucose reading (mmol/L) with a trend arrow. There is no wrapper service and no Bearer token — the Pico logs in for a session id and polls with it.
+A single-file MicroPython app (`src/main.py`) that runs **on-device** on a Raspberry Pi Pico 2 W with a Pimoroni Display Pack 2.8. It authenticates directly against the Dexcom Share API and displays the latest glucose reading (mmol/L or mg/dL, user-selectable) with a trend arrow. There is no wrapper service and no Bearer token - the Pico logs in for a session id and polls with it.
 
 ## Commands
-
-There is no test suite and no build step. The app only runs on the Pico hardware (it imports `picographics`, `pimoroni`, `network`, `ntptime`, `urequests`, `ujson` — none available off-device).
 
 - **Syntax check (the only local validation available):**
   ```bash
   .venv/bin/python3 -m py_compile src/main.py
   ```
-- **Deploy:** transfer `src/main.py` and `src/secrets.py` to the Pico's filesystem (Thonny / `ampy` / `rshell`) and reboot. The Pimoroni libs must already be flashed.
+- **Run tests (CPython, hardware stubbed):**
+  ```bash
+  .venv/bin/python3 -m unittest discover -s tests -v
+  ```
+- **Deploy:** transfer `src/main.py` and optionally `src/secrets.py` to the Pico's filesystem (Thonny / `ampy` / `rshell` / `mpremote`) and reboot. The Pimoroni libs must already be flashed.
 
-The `.venv` is CPython 3.10 used only for `py_compile`; do not add CPython-only dependencies expecting them to exist on the Pico.
+The `.venv` is CPython 3.10 used only for `py_compile` and tests; do not add CPython-only dependencies expecting them to exist on the Pico.
 
 ## Architecture
 
 `src/main.py` is the whole application, structured as a linear state machine in `main()`:
-`ensure_wifi()` (retry loop) → NTP sync (non-fatal) → poll loop (30s interval, or immediate on any button press).
+crash-log WDT check → arm WDT → load settings → `ensure_wifi()` (retry loop, or setup mode if no SSID) → NTP sync (non-fatal) → poll loop (30 s interval, or immediate on A/B/Y press; X opens menu).
 
 Key cross-cutting concepts that span the file:
 
-- **Two-tier age computation** (`draw_reading`). Reading age drives the staleness gate and the "Last reading N mins ago" text. Preferred path: true sensor age from the reading's `ts_ms` (Dexcom `WT` field) via wall-clock, but **only when `_ntp_synced` is True**. Fallback path when NTP failed: monotonic age from `received_ms` (when the reading was received). Any change to age/staleness logic must keep both paths consistent — the same `age_ms` feeds both the displayed minutes and the `> 5 min` blanking.
+- **Two-tier age computation** (`draw_reading`). Reading age drives the staleness gate and the "Last reading N mins ago" text. Preferred path: true sensor age from the reading's `ts_ms` (Dexcom `WT` field) via wall-clock, but **only when `_ntp_synced` is True**. Fallback path when NTP failed: monotonic age from `received_ms` (when the reading was received). Any change to age/staleness logic must keep both paths consistent - the same `age_ms` feeds both the displayed minutes and the staleness gate.
 
-- **Staleness gate** (`_STALE_LIMIT_MS`, strict `>`). A reading older than 5 minutes blanks the value to `---` and hides the trend arrow, while keeping the age text visible. This is a deliberate at-a-glance BG-safety signal — buffered readings that arrive already-old show as stale immediately. Do not weaken it to "time since last fetch."
+- **Staleness gate** (`_STALE_LIMIT_MS`, strict `>`). A reading older than 6 minutes (hard-coded constant, not configurable) blanks the value to `---` and hides the trend arrow, while keeping the age text visible. This is a deliberate at-a-glance BG-safety signal - buffered readings that arrive already-old show as stale immediately. Do not weaken it to "time since last fetch." All three staleness-dependent behaviours (`---` display, solid-red LED, "Previous:" corner) use `_STALE_LIMIT_MS`. There is no `stale_limit_ms()` function.
 
-- **Epoch reconciliation** (`_PICO_EPOCH_OFFSET_S`). Detected at runtime from `time.gmtime(0)[0]`: some MicroPython ports use a 2000-01-01 epoch, others (Pimoroni build) use Unix epoch. A hard-coded offset double-counts ~946M seconds on Unix-epoch builds — keep the runtime detection.
+- **Epoch reconciliation** (`_PICO_EPOCH_OFFSET_S`). Detected at runtime from `time.gmtime(0)[0]`: some MicroPython ports use a 2000-01-01 epoch, others (Pimoroni build) use Unix epoch. A hard-coded offset double-counts ~946M seconds on Unix-epoch builds - keep the runtime detection.
 
-- **Session management** (`_session` mutable cell + `fetch_latest`). Session id is in-memory only; a hardware reset clears it. On a failed fetch, `fetch_latest` does one silent re-login before returning None. Returning None never crashes the display — the caller falls back to the staleness rule.
+- **Session management** (`_session` mutable cell + `fetch_latest`). Session id is in-memory only; a hardware reset clears it. On a failed fetch, `fetch_latest` does one silent re-login before returning None. Returning None never crashes the display - the caller falls back to the staleness rule.
 
-- **Change detection** (poll loop). `received_ms` is only reset when a genuinely new reading arrives, compared by `ts_ms`; if `ts_ms` is None (parse failure), it falls back to comparing the glucose value so a repeated identical reading doesn't reset the receive clock and a parse failure never freezes the display.
+- **Change detection** (poll loop). `received_ms` is only reset when a genuinely new reading arrives, compared by `ts_ms`; if `ts_ms` is None (parse failure), it falls back to comparing `mg_dl` so a repeated identical reading doesn't reset the receive clock and a parse failure never freezes the display.
+
+- **Hang protection** (`_wdt` + `feed_watchdog`, `_REQUEST_TIMEOUT_S`, `rejoin_wifi`). An 8 s hardware watchdog is armed at the top of `main()` and cannot be disabled afterwards. Every blocking loop (Wi-Fi connect/rejoin, button waits, the poll loop, menu loop, setup HTTP accept loop, AP start wait) must call `feed_watchdog()`. All `requests.post` calls pass `timeout=_REQUEST_TIMEOUT_S`. Do not add an unbounded sleep, poll, or socket call without feeding the watchdog.
+
+- **Settings** (`_settings`, `_settings_saved`, `_SETTINGS_SCHEMA`). Live settings are in `_settings` (mutated in place). `_settings_saved` holds the last persisted snapshot; `commit_settings()` saves only when `settings_changed()` is True. Credentials and region are read from `_settings`, never from `secrets.py` constants directly. `secrets.py` supplies defaults when a key is absent from `/settings.json`. After a first save, all schema keys are present in the file, so `secrets.py` has no further effect until the file is deleted.
+
+- **Menu** (`run_menu`, `menu_reduce`, `HoldDetector`). `menu_reduce` is a pure function tested under CPython. The driver loop reads hardware, calls the reducer, applies commits, and calls `apply_settings()`. Hold X for 1.5 s exits the menu; short X press goes back. `run_menu` calls `wait_buttons_released(_MENU_ENTRY_RELEASE_MS)` before sampling, because the opening X press is normally still held and its release would otherwise read as "back". After the menu closes, a fetch is forced on the next poll tick. The main-screen loop ticks every `_POLL_TICK_S` (50 ms) for button sampling but repaints the reading only every `_REDRAW_INTERVAL_MS`; keep sampling and painting decoupled.
+
+- **Wi-Fi setup mode** (`run_wifi_setup`, `serve_setup`). The device raises a WPA2 AP and serves an HTML form. `wlan.scan()` is the only un-feedable blocking C call (1-3 s typically); the watchdog is fed immediately before and after. Do not move the scan inside the HTTP accept loop. STA and AP coexist during setup. Bringing the AP up makes it lwIP's default route in the CYW43 driver, and tearing it down leaves the STA with an address and link but no route to the internet (fetches fail with errno 113). Cycling the STA with `active(False)`/`active(True)` was verified on hardware **not** to fix this, so `run_wifi_setup` never returns: every exit (cancel, timeout, submit) calls `restart_device()`. Submit writes `_SETUP_VERIFY_MARKER` first; `ensure_wifi` consumes it on the next boot and runs `verify_dexcom_after_setup`, re-entering setup with the reason if the join or the login fails. Do not reintroduce an in-process reconnect after AP mode. The poll loop's `recover_after_fetch_failures` restarts the device after `_FETCH_FAILS_BEFORE_STA_RESET` consecutive failures when the link is up and the last error is "no route" (`is_no_route_error`), and cycles the STA for other persistent failures.
+
+- **Soft-reboot detection** (top of `main()` before `ensure_wifi`). A soft reboot (Thonny, PyCharm, Ctrl-D) does not reinitialise the CYW43 chip or lwIP, so the previous run's state, including a missing default route, survives. The STA can only report `active()` this early after a soft reboot, so `main()` turns that into `restart_device()`, a hard reset. Expect the IDE to reconnect after flashing.
+
+- **Network error trace** (`_last_net_error`, `note_net_error`, `describe_net_error`). Network helpers still swallow exceptions and return None, but they record a short "stage: repr(e)" first, cleared by the next successful fetch. Device info shows it with an errno hint (113 = no route to host). When adding a network call, record its failure the same way rather than adding prints.
+
+- **Crash log** (`write_crash_log`, `read_crash_log`, `_bump_wdt_resets`). Written on fatal errors and on WDT-reset detection at boot. `write_crash_log` is inside `try/except` in the fatal handler so it cannot mask the reboot. Direct write (no tmp+rename) is acceptable for the crash path; `read_crash_log` tolerates corruption.
 
 ## Conventions
 
-- Glucose is **always** mmol/L, one decimal (`_MMOL_FACTOR`, `round(..., 1)`). Out-of-range values (`> 14` or `< 4`) render red; there is no separate HIGH/LOW text state — sentinel values like 400/40 mg/dL just render as red numbers.
+- Glucose is stored as a raw mg/dL integer; `convert_mg_dl()` converts to the display unit at draw time, `format_glucose()` formats for display. mmol/L uses one decimal place; mg/dL shows as an integer. Out-of-range values (`> alert_high` or `< alert_low`, in the display unit) render red; there is no separate HIGH/LOW text state. Alert ranges and defaults are per-unit via `_ALERT_SPECS`; `setting_spec()` is the single source of truth for kind and range. Switching units calls `apply_units_change()` which resets both thresholds to the new unit's defaults.
 - Network/parse helpers swallow exceptions and return `None` rather than raising; the UI layer interprets `None` as "unreachable" and applies staleness. Preserve this pattern.
-- `secrets.py` is gitignored (keys: `WIFI_SSID`, `WIFI_PASSWORD`, `DEXCOM_ACCOUNT_ID`, `DEXCOM_PASSWORD`, `DEXCOM_REGION`). Never commit it; `secrets.example.py` is the template.
-- `requirements.md` is the behavioural spec — treat it as the source of truth for intended on-device behaviour. Keep `CHANGELOG.md` (Keep-a-Changelog style, `Unreleased` section) updated for user-facing changes.
+- `secrets.py` is gitignored (keys: `WIFI_SSID`, `WIFI_PASSWORD`, `DEXCOM_ACCOUNT_ID`, `DEXCOM_PASSWORD`, `DEXCOM_REGION`). Never commit it; `secrets.example.py` is the template. The file is optional at runtime.
+- `requirements.md` is the behavioural spec - treat it as the source of truth for intended on-device behaviour. Keep `CHANGELOG.md` (Keep-a-Changelog style, `Unreleased` section) updated for user-facing changes.
+- Frontend text (HTML setup page, on-screen strings): use the plain keyboard hyphen `-` only, never Unicode dashes.
+
+## MicroPython compatibility guards
+
+- No f-strings with `=` specifiers or nested quotes
+- No `str.format` on bytes
+- No `dict` comprehension with walrus operator
+- No `dataclasses` or `typing` imports (type hints in docstrings only)
+- `json.dumps` without `indent`/`separators` keyword arguments
+- `os.rename`/`os.remove`/`os.stat` only (no `os.path`, `pathlib`, etc.)
+- `socket` (not `usocket`) with `socket.getaddrinfo`
+- `uio.StringIO` via `try: import uio except ImportError: import io as uio`
+- `ujson` via `try: import ujson as json except ImportError: import json`
+
+## Test suite
+
+Pure-logic functions (settings validation, HTTP parsing, form decoding, menu reducer, hold detection) are covered by `tests/`. `tests/hw_stubs.py` installs fake hardware modules into `sys.modules` **before** importing `main`. The stub `secrets` module must be pre-seeded before the import because CPython has a stdlib `secrets` module that would otherwise be imported. The `if __name__ == "__main__"` guard in `main.py` ensures importing it from tests runs nothing.
