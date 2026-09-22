@@ -1,4 +1,5 @@
 import time
+import math
 import machine
 import network
 import os
@@ -124,6 +125,16 @@ _TREND_MAP = {
     "NotComputable":   None,
     "RateOutOfRange":  None,
 }
+
+# Canonical trend names that draw_trend() can render as an arrow
+_ARROW_TRENDS = tuple(t for t in _TREND_MAP.values() if t is not None)
+
+# Small trend arrow drawn beside "Previous: X.X" while the reading is stale.
+# Sized to sit on the 16 px scale-2 bitmap8 text row without enlarging it.
+_PREV_ARROW_BOX_PX       = 22   # square box the arrow is centred in
+_PREV_ARROW_SIZE_PX      = 9    # half-length of the arrow shaft
+_PREV_ARROW_THICKNESS_PX = 3
+_PREV_ARROW_GAP_PX       = 6    # gap between the text and the arrow box
 
 # Mutable cell holding the current Dexcom session id
 _session = [None]   # _session[0] holds the current session id string or None
@@ -753,24 +764,60 @@ def draw_status(msg, sub=None, dots=False):
     display.update()
 
 
-def draw_bottom_right(msg, color=GREY, scale=1, y=None):
+def draw_bottom_right(msg, color=GREY, scale=1, y=None, right_margin=4):
+    """Draw bitmap8 text right-aligned to the display edge minus right_margin px."""
     char_h = 8
     try:
         display.set_font("bitmap8")
         text_w = display.measure_text(msg, scale)
     except Exception:
         text_w = len(msg) * char_h * scale
-    x = max(0, WIDTH - text_w - 4)
+    x = max(0, WIDTH - text_w - right_margin)
     if y is None:
         y = HEIGHT - (char_h * scale) - 4
     draw_text(msg, x, y, color=color, scale=scale, wrap=WIDTH, font="bitmap8")
 
 
-def draw_trend(trend, x0, y0, w, h, color=WHITE):
+def draw_thick_line(x1, y1, x2, y2, thickness):
+    """
+    Draw a solid line about `thickness` px wide using 1 px display.line calls.
+    Copies are shifted along whichever axis is closer to perpendicular to the
+    line, so diagonal strokes fill in rather than hatching.
+    """
+    ldx = x2 - x1
+    ldy = y2 - y1
+    length = math.sqrt(ldx * ldx + ldy * ldy)
+    if length == 0:
+        display.line(int(x1), int(y1), int(x2), int(y2))
+        return
+    if abs(ldx) >= abs(ldy):
+        sx, sy = 0, 1
+        step = abs(ldx) / length
+    else:
+        sx, sy = 1, 0
+        step = abs(ldy) / length
+    count = max(1, int(thickness / step + 0.5))
+    for i in range(count):
+        offset = i - count // 2
+        display.line(
+            int(x1) + sx * offset,
+            int(y1) + sy * offset,
+            int(x2) + sx * offset,
+            int(y2) + sy * offset
+        )
+
+
+def draw_trend(trend, x0, y0, w, h, color=WHITE, size=None, thickness=5):
+    """
+    Draw the trend arrow centred in the box (x0, y0, w, h).
+    size is the half-length of the arrow shaft in px (defaults to a sixth of
+    the box's shorter side); thickness is the stroke width in px.
+    """
     display.set_pen(color)
     cx = x0 + w // 2
     cy = y0 + h // 2
-    size = min(w, h) // 6
+    if size is None:
+        size = min(w, h) // 6
 
     def arrow(dx, dy, offset_x=0.0):
         center_x = cx + offset_x
@@ -778,32 +825,14 @@ def draw_trend(trend, x0, y0, w, h, color=WHITE):
         y1 = cy - dy * size
         x2 = center_x + dx * size
         y2 = cy + dy * size
-        thickness = 5
         pdx, pdy = -dy, dx
-        for offset in range(-thickness // 2, thickness // 2 + 1):
-            display.line(
-                int(x1 + pdx * offset),
-                int(y1 + pdy * offset),
-                int(x2 + pdx * offset),
-                int(y2 + pdy * offset)
-            )
+        draw_thick_line(x1, y1, x2, y2, thickness)
         hx = x2
         hy = y2
         ah = size // 1.8
         aw = ah // 1.8
-        for offset in range(-thickness // 2, thickness // 2 + 1):
-            display.line(
-                int(hx + pdx * offset),
-                int(hy + pdy * offset),
-                int(hx - dx * ah + pdx * aw + pdx * offset),
-                int(hy - dy * ah + pdy * aw + pdy * offset)
-            )
-            display.line(
-                int(hx + pdx * offset),
-                int(hy + pdy * offset),
-                int(hx - dx * ah - pdx * aw + pdx * offset),
-                int(hy - dy * ah - pdy * aw + pdy * offset)
-            )
+        draw_thick_line(hx, hy, hx - dx * ah + pdx * aw, hy - dy * ah + pdy * aw, thickness)
+        draw_thick_line(hx, hy, hx - dx * ah - pdx * aw, hy - dy * ah - pdy * aw, thickness)
 
     if trend == "doubleUp":
         spacing = size * 1.0
@@ -904,10 +933,30 @@ def draw_reading(state):
         prev_mg_dl = state.get("mg_dl")
         if prev_mg_dl is not None:
             prev_val = convert_mg_dl(prev_mg_dl, units)
-            prev_txt = format_glucose(prev_val, units)
-            draw_bottom_right("Previous: " + prev_txt, WHITE, scale=2, y=HEIGHT - 24)
+            prev_txt = "Previous: " + format_glucose(prev_val, units)
+            draw_previous_corner(prev_txt, trend)
 
     display.update()
+
+
+def draw_previous_corner(prev_txt, trend):
+    """
+    Draw the stale-state "Previous: X.X" text in the bottom-right corner with
+    a small trend arrow to its right, so the last known direction stays
+    visible. The text keeps its scale-2 size; the arrow box is centred on
+    the text row and the text shifts left to make room for it.
+    """
+    text_y = HEIGHT - 24
+    if trend not in _ARROW_TRENDS:
+        draw_bottom_right(prev_txt, WHITE, scale=2, y=text_y)
+        return
+    box = _PREV_ARROW_BOX_PX
+    arrow_x = WIDTH - 4 - box
+    arrow_y = text_y + 8 - box // 2
+    draw_bottom_right(prev_txt, WHITE, scale=2, y=text_y,
+                      right_margin=4 + box + _PREV_ARROW_GAP_PX)
+    draw_trend(trend, arrow_x, arrow_y, box, box, WHITE,
+               size=_PREV_ARROW_SIZE_PX, thickness=_PREV_ARROW_THICKNESS_PX)
 
 
 def update_led():

@@ -10,7 +10,7 @@ All notable changes to this project will be documented in this file.
 - **True sensor-age basis** - Reading age is computed from the Dexcom sensor's timestamp (WT field) rather than device receipt time. This correctly handles buffered readings that arrive aged.
 - **NTP time synchronization at boot** - The Pico syncs its real-time clock via NTP immediately after Wi-Fi connects (3 retries, 2-second gaps). This enables accurate wall-clock-based sensor-age calculation. If NTP fails, the app degrades gracefully to monotonic time; this is non-fatal.
 - **Onboard RGB LED glucose alerts** - The Pimoroni Display Pack 2.8's RGB LED now provides visual feedback: flashes red when the value is out of range, shows solid red when the reading is stale (older than 6 minutes), and remains off otherwise. Precedence: stale > out-of-range > off.
-- **Last-known reading on stale** - When a reading becomes stale, the bottom-right corner displays "Previous: X.X" (or "Previous: NNN" in mg/dL) showing the last known glucose value before the device went offline.
+- **Last-known reading on stale** - When a reading becomes stale, the bottom-right corner displays "Previous: X.X" (or "Previous: NNN" in mg/dL) showing the last known glucose value before the device went offline, followed by a small arrow showing the trend that reading had. The text stays at its usual size; the arrow is drawn to fit the same row.
 - **MIT License** - The project is now released under the MIT License.
 - **On-device settings menu** - Press X to open a settings menu with configurable backlight, units, alert thresholds, Dexcom region, LED alerts toggle, Wi-Fi setup, device info, and restart. Menu auto-closes after 60 seconds of inactivity. Settings are saved to `/settings.json` on each confirmed edit.
 - **Blood sugar unit selection** - "Units" menu item switches between mmol/L (default) and mg/dL. Switching units automatically resets alert thresholds to the target unit's defaults (mmol/L: low 4.0, high 14.0; mg/dL: low 70, high 180). The raw mg/dL value is stored in memory; conversion to the chosen unit happens at draw time.
@@ -26,6 +26,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- **Solid diagonal trend arrows** - The 45-degree arrows are now drawn as solid strokes; previously their thickness was built from offset lines that left a hatched pattern.
 - **Age text now displays "Last reading N mins ago"** (previously "Last updated...") to clarify that the timestamp is sensor-based, not device-receipt-based.
 - **Reading change detection now uses the reading's timestamp** (`ts_ms`) rather than an opaque ID field, improving consistency with the true-age logic.
 - **Bottom-right corner of the glucose display** no longer shows the trend-direction text label by default. The trend arrow remains unchanged.

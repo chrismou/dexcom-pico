@@ -61,8 +61,10 @@ Scenarios for the data:
 2. No reading is returned (API unreachable, login failure, empty list, or network error), or the reading is stale:
    - Continue displaying the existing reading as long as the age is under 6 minutes.
    - If the reading is stale (older than 6 minutes), update the display to show `---` in the main value area,
-     hide the trend arrow, and display "Previous: X.X" (or "Previous: NNN" in mg/dL) in the bottom-right corner
-     showing the last known glucose value. The "Last reading N mins ago" text remains visible.
+     hide the large trend arrow, and display "Previous: X.X" (or "Previous: NNN" in mg/dL) in the bottom-right
+     corner showing the last known glucose value, followed by a small arrow for its trend (same set of arrows as
+     the main display; omitted when the trend was not one of them). The text keeps its normal size; the arrow is
+     sized to sit on the same row. The "Last reading N mins ago" text remains visible.
 
 Button interactions:
 
