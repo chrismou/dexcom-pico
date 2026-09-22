@@ -134,6 +134,8 @@ _ARROW_TRENDS = tuple(t for t in _TREND_MAP.values() if t is not None)
 _PREV_ARROW_BOX_PX       = 22   # square box the arrow is centred in
 _PREV_ARROW_SIZE_PX      = 9    # half-length of the arrow shaft
 _PREV_ARROW_THICKNESS_PX = 3
+_PREV_ARROW_HEAD_LEN_PX  = 8    # barb length, longer than the default ratio so
+_PREV_ARROW_HEAD_WIDTH_PX = 3   # the direction reads from across the room
 _PREV_ARROW_GAP_PX       = 6    # gap between the text and the arrow box
 
 # Mutable cell holding the current Dexcom session id
@@ -807,17 +809,24 @@ def draw_thick_line(x1, y1, x2, y2, thickness):
         )
 
 
-def draw_trend(trend, x0, y0, w, h, color=WHITE, size=None, thickness=5):
+def draw_trend(trend, x0, y0, w, h, color=WHITE, size=None, thickness=5,
+               head_len=None, head_width=None):
     """
     Draw the trend arrow centred in the box (x0, y0, w, h).
     size is the half-length of the arrow shaft in px (defaults to a sixth of
-    the box's shorter side); thickness is the stroke width in px.
+    the box's shorter side); thickness is the stroke width in px. head_len is
+    how far each barb runs back from the tip along the shaft and head_width
+    how far it spreads to the side; both default to a proportion of size.
     """
     display.set_pen(color)
     cx = x0 + w // 2
     cy = y0 + h // 2
     if size is None:
         size = min(w, h) // 6
+    ah = head_len if head_len is not None else size // 1.8
+    aw = head_width if head_width is not None else ah // 1.8
+    # Double arrows sit one shaft-length apart, or wider if the heads would touch
+    spacing = max(size * 1.0, 2 * aw + thickness + 2)
 
     def arrow(dx, dy, offset_x=0.0):
         center_x = cx + offset_x
@@ -829,13 +838,10 @@ def draw_trend(trend, x0, y0, w, h, color=WHITE, size=None, thickness=5):
         draw_thick_line(x1, y1, x2, y2, thickness)
         hx = x2
         hy = y2
-        ah = size // 1.8
-        aw = ah // 1.8
         draw_thick_line(hx, hy, hx - dx * ah + pdx * aw, hy - dy * ah + pdy * aw, thickness)
         draw_thick_line(hx, hy, hx - dx * ah - pdx * aw, hy - dy * ah - pdy * aw, thickness)
 
     if trend == "doubleUp":
-        spacing = size * 1.0
         arrow(0, -1, -spacing // 2)
         arrow(0, -1, spacing // 2)
     elif trend == "singleUp":
@@ -849,7 +855,6 @@ def draw_trend(trend, x0, y0, w, h, color=WHITE, size=None, thickness=5):
     elif trend == "singleDown":
         arrow(0, 1)
     elif trend == "doubleDown":
-        spacing = size * 1.0
         arrow(0, 1, -spacing // 2)
         arrow(0, 1, spacing // 2)
     else:
@@ -956,7 +961,8 @@ def draw_previous_corner(prev_txt, trend):
     draw_bottom_right(prev_txt, WHITE, scale=2, y=text_y,
                       right_margin=4 + box + _PREV_ARROW_GAP_PX)
     draw_trend(trend, arrow_x, arrow_y, box, box, WHITE,
-               size=_PREV_ARROW_SIZE_PX, thickness=_PREV_ARROW_THICKNESS_PX)
+               size=_PREV_ARROW_SIZE_PX, thickness=_PREV_ARROW_THICKNESS_PX,
+               head_len=_PREV_ARROW_HEAD_LEN_PX, head_width=_PREV_ARROW_HEAD_WIDTH_PX)
 
 
 def update_led():

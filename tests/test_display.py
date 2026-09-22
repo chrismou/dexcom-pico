@@ -105,7 +105,9 @@ class TestDrawTrendSmall(_SpyDisplay):
         self.lines.clear()
         main.draw_trend(trend, 0, 0, main._PREV_ARROW_BOX_PX, main._PREV_ARROW_BOX_PX,
                         main.WHITE, size=main._PREV_ARROW_SIZE_PX,
-                        thickness=main._PREV_ARROW_THICKNESS_PX)
+                        thickness=main._PREV_ARROW_THICKNESS_PX,
+                        head_len=main._PREV_ARROW_HEAD_LEN_PX,
+                        head_width=main._PREV_ARROW_HEAD_WIDTH_PX)
 
     def test_every_arrow_trend_draws_something(self):
         for trend in main._ARROW_TRENDS:
@@ -126,6 +128,23 @@ class TestDrawTrendSmall(_SpyDisplay):
                 self.assertLessEqual(x, box + 2, trend)
                 self.assertGreaterEqual(y, -3, trend)
                 self.assertLessEqual(y, box + 2, trend)
+
+
+class TestDoubleArrowSpacing(_SpyDisplay):
+
+    def _shaft_xs(self, **kwargs):
+        self.lines.clear()
+        main.draw_trend("doubleUp", 0, 0, 100, 100, main.WHITE, **kwargs)
+        # Shafts are the vertical lines; collect their distinct x positions
+        return sorted({l[0] for l in self.lines if l[0] == l[2]})
+
+    def test_default_spacing_is_one_shaft_length(self):
+        xs = self._shaft_xs(size=20, thickness=1)
+        self.assertEqual(xs, [40, 60])
+
+    def test_spacing_widens_when_heads_would_touch(self):
+        xs = self._shaft_xs(size=9, thickness=3, head_len=8, head_width=3)
+        self.assertGreaterEqual(xs[-1] - xs[0], 2 * 3 + 3 + 2 - 2)
 
 
 class TestDrawPreviousCorner(_SpyDisplay):
