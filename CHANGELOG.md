@@ -26,6 +26,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- **Longer arrowheads** - The trend arrow's barbs now run 85% of the shaft half-length (previously 55%) so the direction is obvious from across the room. Double arrows space out automatically when the wider heads would otherwise touch.
 - **Solid diagonal trend arrows** - The 45-degree arrows are now drawn as solid strokes; previously their thickness was built from offset lines that left a hatched pattern.
 - **Age text now displays "Last reading N mins ago"** (previously "Last updated...") to clarify that the timestamp is sensor-based, not device-receipt-based.
 - **Reading change detection now uses the reading's timestamp** (`ts_ms`) rather than an opaque ID field, improving consistency with the true-age logic.

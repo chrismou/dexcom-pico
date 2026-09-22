@@ -126,6 +126,10 @@ _TREND_MAP = {
     "RateOutOfRange":  None,
 }
 
+# Arrowhead barb length as a fraction of the shaft half-length. Long barbs so
+# the direction reads from across the room.
+_ARROW_HEAD_RATIO = 0.85
+
 # Canonical trend names that draw_trend() can render as an arrow
 _ARROW_TRENDS = tuple(t for t in _TREND_MAP.values() if t is not None)
 
@@ -823,7 +827,7 @@ def draw_trend(trend, x0, y0, w, h, color=WHITE, size=None, thickness=5,
     cy = y0 + h // 2
     if size is None:
         size = min(w, h) // 6
-    ah = head_len if head_len is not None else size // 1.8
+    ah = head_len if head_len is not None else int(size * _ARROW_HEAD_RATIO)
     aw = head_width if head_width is not None else ah // 1.8
     # Double arrows sit one shaft-length apart, or wider if the heads would touch
     spacing = max(size * 1.0, 2 * aw + thickness + 2)

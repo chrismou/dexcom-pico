@@ -139,8 +139,9 @@ class TestDoubleArrowSpacing(_SpyDisplay):
         return sorted({l[0] for l in self.lines if l[0] == l[2]})
 
     def test_default_spacing_is_one_shaft_length(self):
-        xs = self._shaft_xs(size=20, thickness=1)
-        self.assertEqual(xs, [40, 60])
+        # Heads spread 0.85 * size / 1.8 each side, so at size 40 they clear
+        xs = self._shaft_xs(size=40, thickness=1)
+        self.assertEqual(xs, [30, 70])
 
     def test_spacing_widens_when_heads_would_touch(self):
         xs = self._shaft_xs(size=9, thickness=3, head_len=8, head_width=3)
